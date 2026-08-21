@@ -1,19 +1,19 @@
 {
   "format": 1,
   "target": "arduino:avr:uno",
-  "generated_at": "2026-08-20",
+  "generated_at": "2026-08-21",
   "artifacts": {
     "Uno-1": {
       "source": "sensor_uno_3uno_proxy/sensor_uno_3uno_proxy.ino",
-      "source_sha256": "039ab5f386c436467746a336b13b77d1c82e0cdb023b8382c9120b97cad970ef",
+      "source_sha256": "191e4767d77e2cbc28c2999d8b213d7a6a5d1925939d21757bf1160f05268d8d",
       "hex": "sensor_uno_3uno_proxy/sensor_uno_3uno_proxy.ino.hex",
-      "hex_sha256": "b8200e8ed501cd9cdb44d64697bbfb78cf58d4fe0ed19f5370e0e942cd05c69d"
+      "hex_sha256": "8935b9ddabc29b0d81dea782c3d8c166980c89289ec2054a7a8857ee4e1075bb"
     },
     "Uno-2": {
       "source": "motor_uno_i2c_proxy/motor_uno_i2c_proxy.ino",
-      "source_sha256": "e9a87e08a0eb01d866feecbe85cc724053142527a94f42ac9ec344c1858b144e",
+      "source_sha256": "ace54d3758f03e64f66ec5ef0b421b45d7e651dbdd3f72ba86ad18f5f7512190",
       "hex": "motor_uno_i2c_proxy/motor_uno_i2c_proxy.ino.hex",
-      "hex_sha256": "73960a521ad80340892ed28203386fb15afe03b39b142ee4d79b8a07560b4bd7"
+      "hex_sha256": "2a26090feaf998588d7eb8fc7f35c244c675e86752c39381f41d596bb14aec43"
     },
     "Uno-3": {
       "source": "actuator_uno_i2c_proxy/actuator_uno_i2c_proxy.ino",

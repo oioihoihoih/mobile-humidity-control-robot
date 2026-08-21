@@ -20,6 +20,17 @@
 | [Northeastern Capstone TRASH](https://github.com/Capstone-W3/trash_parent_repo) | 문제·PoC 범위·미완료 조건을 분리한 팀프로젝트 설명 | 벤치 검증과 실차 미검증을 첫 화면에서 구분하고 완료 기준을 별도 문서화 |
 | [MIT Racecar Simulator](https://github.com/mit-racecar/racecar_simulator) | Dependencies → Install → Quick Start → API/Parameters 순서 | 설치, 서버 실행, API, 테스트 문서의 단계별 읽기 흐름 |
 
+## 모터 실드 전기 기준
+
+- [Adafruit Motor Shield V1 안내](https://learn.adafruit.com/adafruit-motor-shield/overview):
+  AFMotor 계열 4채널 L293D 실드의 채널 수, 모터 전원 분리와 채널당 전류 범위를
+  확인하는 기준으로 사용했습니다. 실제 보드가 호환 클론이면 부품 표기와 회로를
+  별도로 대조해야 합니다.
+- [TI L293D 데이터시트](https://www.ti.com/lit/ds/symlink/l293d.pdf):
+  연속 출력전류, 피크 조건, 전압강하와 열 한계를 판단하는 권위 자료입니다.
+  N20의 정지전류가 확인되지 않은 상태에서 4개 동시 바닥 기동을 허용하는 근거로
+  사용하지 않습니다.
+
 ## 의도적으로 채택하지 않은 요소
 
 - 실행 근거가 없는 장식용 배지와 고정된 과거 테스트 수치

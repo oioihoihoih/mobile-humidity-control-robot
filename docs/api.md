@@ -311,13 +311,15 @@ HOME 보정:
 | --- | --- |
 | `TASK` | 지정 구역의 `HUMIDIFY`, `DEHUMIDIFY` 또는 이동만 수행 |
 | `CALIBRATE_HOME` | HOME 정지 배치와 outbound 방향 동기화 |
-| `MOTOR_FWD`, `MOTOR_RETURN`, `MOTOR_STOP` | 벤치·경로 진단용 모터 제어 |
+| `MOTOR_FWD`, `MOTOR_RETURN`, `MOTOR_STOP` | 네 바퀴 수동 전진, 현재 위치에서 HOME까지의 경로 기반 직선 후진 복귀, 정지 |
 | `ALL_STOP` | latch되는 전체 안전 정지 |
 | `ACT_HUMIDIFY`, `ACT_DEHUMID`, `ACT_STOP` | 무부하 액추에이터 진단 |
 | `RFID_TEST` | 실제 카드가 아닌 합성 도착 이벤트 시험 |
 | `I2C_CHECK` | 3-Uno I2C 상태 확인 |
 
 현재 수동 명령의 ACK가 오기 전에는 `ALL_STOP` 외 명령으로 덮어쓸 수 없습니다. 수동 가습·제습이 완료되면 서버는 같은 revision의 반복 가동을 막기 위해 같은 구역의 `TASK / NONE`으로 전환합니다.
+
+`MOTOR_RETURN`은 임의 벤치 역회전 명령이 아닙니다. HOME 보정, 알려진 현재 역과 정상 RFID 상태가 필요합니다. `MOTOR_FWD`는 RFID 경로를 무시하므로 실행 즉시 위치를 `UNKNOWN`으로 잠그며, 그 뒤 복귀하려면 차를 HOME에 회수해 `CALIBRATE_HOME`을 다시 실행해야 합니다.
 
 ### `POST /api/settings`
 

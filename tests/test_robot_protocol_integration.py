@@ -28,16 +28,18 @@ MOTOR_SOURCE = ROOT / "firmware/uno_line_tracker_motor_controller/uno_line_track
 ACTUATOR_SOURCE = ROOT / "firmware/uno_humidity_module_controller/uno_humidity_module_controller.ino"
 NETWORK_SOURCE = ROOT / "firmware/uno_robot_esp01_rfid_relay/robot_network_config.example.h"
 SENSOR_DIAGNOSTIC_SOURCE = ROOT / "firmware/uno_sensor_pin_diagnostic/uno_sensor_pin_diagnostic.ino"
+ZONE2_DRIVE_DIAGNOSTIC_SOURCE = ROOT / "firmware/uno_zone2_rfid_drive_diagnostic/uno_zone2_rfid_drive_diagnostic.ino"
 
 
 class MotorCommand(IntEnum):
     STOP = 0
-    OUTBOUND = 1
-    RETURN = 2
+    OUTBOUND = 0x11
+    RETURN = 0x12
     PAUSE = 3
     RESUME = 4
     KEEPALIVE = 5
     HOME_SYNC = 6
+    PROTOCOL_SYNC = 7
 
 
 class MotorStatus(IntEnum):
@@ -49,6 +51,7 @@ class MotorStatus(IntEnum):
     INVALID = 5
     UNEXPECTED_MARKER = 6
     CALIBRATION_REQUIRED = 7
+    PROTOCOL_REQUIRED = 8
 
 
 class ActuatorCommand(IntEnum):
@@ -155,11 +158,12 @@ class LinearRouteSim:
     waiting_rfid: bool = False
     completed: bool = False
     failed: bool = False
-    turned_last_start: bool = False
+    reverse_last_start: bool = False
     last_rfid: RouteStation | None = None
     last_rfid_ms: int = -1_200
-    turn_guard_started_ms: int = 0
-    turn_guard_active: bool = False
+    direction_guard_started_ms: int = 0
+    direction_guard_active: bool = False
+    direction_clear_seen: bool = False
     route_known: bool = True
 
     def task(self, destination: RouteStation, now_ms: int = 0) -> None:
@@ -183,14 +187,14 @@ class LinearRouteSim:
         self._travel(RouteStation.HOME, now_ms)
 
     def _travel(self, destination: RouteStation, now_ms: int = 0) -> None:
-        self.turned_last_start = False
+        self.reverse_last_start = False
+        previous_heading = self.heading
         if self.at_station:
             desired = (
                 RouteHeading.OUTBOUND
                 if destination > self.confirmed
                 else RouteHeading.HOMEBOUND
             )
-            self.turned_last_start = desired != self.heading
             self.heading = desired
             self.expected = RouteStation(self.confirmed + self.heading)
         else:
@@ -206,10 +210,13 @@ class LinearRouteSim:
                     else RouteHeading.OUTBOUND
                 )
                 self.expected = self.confirmed
-                self.turned_last_start = True
-        if self.turned_last_start:
-            self.turn_guard_started_ms = now_ms
-            self.turn_guard_active = True
+        # The chassis never turns around. HOMEBOUND means all four wheels run
+        # in reverse while the robot keeps the same physical orientation.
+        self.reverse_last_start = self.heading == RouteHeading.HOMEBOUND
+        if self.heading != previous_heading:
+            self.direction_guard_started_ms = now_ms
+            self.direction_guard_active = True
+            self.direction_clear_seen = False
         self.at_station = False
         self.waiting_rfid = False
         self.moving = True
@@ -235,10 +242,10 @@ class LinearRouteSim:
     def rfid(self, station: RouteStation, now_ms: int = 0) -> str:
         if not (self.moving or self.waiting_rfid):
             return "IGNORED"
-        if self.turn_guard_active:
-            if now_ms - self.turn_guard_started_ms < 850:
-                return "TURN_GUARD"
-            self.turn_guard_active = False
+        if self.direction_guard_active:
+            if not self.direction_clear_seen or now_ms - self.direction_guard_started_ms < 850:
+                return "DIRECTION_GUARD"
+            self.direction_guard_active = False
         if self.last_rfid == station and station != self.expected:
             return "REPEAT_IGNORED"
         self.last_rfid = station
@@ -259,9 +266,14 @@ class LinearRouteSim:
         self._travel(self.target, now_ms)
         return "PASS"
 
-    def obstacle_pause_during_turn(self, now_ms: int) -> None:
-        if self.turn_guard_active:
-            self.turn_guard_started_ms = now_ms
+    def rfid_clear(self, now_ms: int) -> None:
+        if self.direction_guard_active:
+            self.direction_clear_seen = True
+
+    def obstacle_pause_during_direction_change(self, now_ms: int) -> None:
+        if self.direction_guard_active:
+            self.direction_guard_started_ms = now_ms
+            self.direction_clear_seen = False
 
     def movement_timeout(self) -> None:
         self.moving = False
@@ -293,7 +305,6 @@ class MotorUnoSim:
     departure_clearing: bool = False
     stop_line_detection_armed: bool = False
     departure_started_ms: int = 0
-    return_turn_until_ms: int | None = None
     heading_homebound: bool = False
     both_high_started_ms: int | None = None
     applied_command: int = int(MotorCommand.STOP)
@@ -304,10 +315,13 @@ class MotorUnoSim:
     # Most historical route tests start from an already synchronized HOME.
     # Reboot/calibration tests explicitly construct calibrated=False.
     calibrated: bool = True
+    protocol_validated: bool = True
     home_marker_present: bool = False
 
     def __post_init__(self) -> None:
-        if not self.calibrated:
+        if not self.protocol_validated:
+            self._safe_stop(MotorStatus.PROTOCOL_REQUIRED)
+        elif not self.calibrated:
             self._safe_stop(MotorStatus.CALIBRATION_REQUIRED)
 
     def command(self, raw: int, now_ms: int) -> int:
@@ -362,8 +376,18 @@ class MotorUnoSim:
         command = MotorCommand(raw)
         self.last_control_ms = now_ms
         if command == MotorCommand.KEEPALIVE:
-            if not self.calibrated:
+            if not self.protocol_validated:
+                self._safe_stop(MotorStatus.PROTOCOL_REQUIRED)
+            elif not self.calibrated:
                 self._safe_stop(MotorStatus.CALIBRATION_REQUIRED)
+            return
+        if command == MotorCommand.PROTOCOL_SYNC:
+            self.protocol_validated = True
+            self.calibrated = False
+            self._safe_stop(MotorStatus.PROTOCOL_REQUIRED)
+            return
+        if not self.protocol_validated:
+            self._safe_stop(MotorStatus.PROTOCOL_REQUIRED)
             return
         if command == MotorCommand.HOME_SYNC:
             self.calibrated = False
@@ -398,21 +422,12 @@ class MotorUnoSim:
         self.paused = False
         self.stop_line_latched = False
         self._reset_departure()
-        self.return_turn_until_ms = now_ms + 700 if command == MotorCommand.RETURN else None
-        if command == MotorCommand.RETURN:
-            self.heading_homebound = not self.heading_homebound
+        self.heading_homebound = command == MotorCommand.RETURN
         self.status = MotorStatus.IDLE if command == MotorCommand.STOP else MotorStatus.RUNNING
 
     def observe_line(self, left_high: bool, right_high: bool, now_ms: int = 0) -> None:
         if self.active == MotorCommand.STOP or self.paused:
             return
-
-        # RETURN spends its first 700ms turning. The departure-clear timer must
-        # not start until line following actually begins after that turn.
-        if self.return_turn_until_ms is not None:
-            if now_ms < self.return_turn_until_ms:
-                return
-            self.return_turn_until_ms = None
 
         both_high = left_high and right_high
         if not self.line_following_started:
@@ -456,7 +471,6 @@ class MotorUnoSim:
         self.active = MotorCommand.STOP
         self.paused = False
         self.stop_line_latched = False
-        self.return_turn_until_ms = None
         self.both_high_started_ms = None
         self._reset_departure()
         self.status = status
@@ -654,12 +668,7 @@ class TwoEventQueue:
 
 @dataclass
 class SensorUnoSim:
-    """Coordinator model for revision, RFID, and optional ultrasonic safety.
-
-    The production demo currently runs HC-SR04 in monitor-only mode.  The
-    default remains enabled so the dormant safety branch is still regression
-    tested for the day the compile-time switch is restored.
-    """
+    """Coordinator model with a rear-facing, best-effort HC-SR04."""
 
     motor: MotorUnoSim = field(default_factory=MotorUnoSim)
     actuator: ActuatorUnoSim = field(default_factory=ActuatorUnoSim)
@@ -679,7 +688,8 @@ class SensorUnoSim:
     ultrasonic_failure_score: int = 0
     ultrasonic_valid_streak: int = 0
     last_ultrasonic_sample: UltrasonicSample = UltrasonicSample.UNKNOWN
-    ultrasonic_safety_enabled: bool = True
+    last_ultrasonic_distance_cm: int | None = None
+    last_ultrasonic_sample_ms: int = 0
     rfid_ready: bool = True
     rfid_version: int = 0x92
 
@@ -705,12 +715,10 @@ class SensorUnoSim:
             self.rfid_ready = self.rfid_version not in (0x00, 0xFF)
             if not self.rfid_ready:
                 self._fault_stop("RFID_NOT_READY", now_ms)
-            elif self._ultrasonic_ready(now_ms):
+            else:
                 self.motor.command(MotorCommand.OUTBOUND, now_ms)
                 self.phase = "MOVING"
                 self.events.put("DISPATCHED")
-            else:
-                self._fault_stop(self._ultrasonic_fault_event(), now_ms)
         elif command == "ALL_STOP":
             self._all_stop(now_ms)
             self.phase = "IDLE"
@@ -723,12 +731,20 @@ class SensorUnoSim:
             self.task_active = False
             if should_return:
                 self._send_actuator(ActuatorCommand.STOP, now_ms)
-                if self._ultrasonic_ready(now_ms):
+                rear_blocked = (
+                    self.last_ultrasonic_sample == UltrasonicSample.STUCK_HIGH
+                    or (
+                        self.last_ultrasonic_sample == UltrasonicSample.VALID
+                        and self.last_ultrasonic_distance_cm is not None
+                        and self.last_ultrasonic_distance_cm < 15
+                    )
+                )
+                if rear_blocked:
+                    self._fault_stop("REVERSE_START_BLOCKED", now_ms)
+                else:
                     self.motor.command(MotorCommand.RETURN, now_ms)
                     self.phase = "RETURNING"
                     self.events.put("RETURN_STARTED")
-                else:
-                    self._fault_stop(self._ultrasonic_fault_event(), now_ms)
             else:
                 self.phase = "IDLE"
                 self.result = "COMPLETED"
@@ -778,6 +794,8 @@ class SensorUnoSim:
     ) -> None:
         valid = sample == UltrasonicSample.VALID and cm is not None
         self.last_ultrasonic_sample = sample
+        self.last_ultrasonic_distance_cm = cm if valid else None
+        self.last_ultrasonic_sample_ms = now_ms
         if valid:
             if now_ms - self.last_valid_ultrasonic_ms > 1_000:
                 self.ultrasonic_valid_streak = 0
@@ -788,43 +806,25 @@ class SensorUnoSim:
             self.ultrasonic_valid_streak = 0
             self.ultrasonic_failure_score = min(3, self.ultrasonic_failure_score + 1)
 
-        if self.phase not in ("MOVING", "RETURNING"):
+        # The sensor is mounted on the rear/N20 side. Outbound forward motion
+        # is monitor-only; only an actual reverse/homebound run is controlled.
+        if self.phase not in ("MOVING", "RETURNING") or not self.motor.heading_homebound:
             return
-        if not self.ultrasonic_safety_enabled:
-            return
-        if sample == UltrasonicSample.STUCK_HIGH or self.ultrasonic_failure_score >= 3:
-            self._fault_stop(self._ultrasonic_fault_event(), now_ms)
-            return
-        if valid and cm < 15 and not self.motor.paused:
+        pause_required = (
+            sample == UltrasonicSample.STUCK_HIGH or (valid and cm < 15)
+        )
+        if pause_required and not self.motor.paused:
             self.motor.command(MotorCommand.PAUSE, now_ms)
-        if valid and (cm < 15 or (self.motor.paused and cm < 18)):
+        if pause_required or (valid and self.motor.paused and cm < 18):
             # Clear readings must begin after the last near-obstacle sample.
             self.ultrasonic_valid_streak = 0
         elif (
             valid
             and cm >= 18
             and self.motor.paused
-            and self.ultrasonic_failure_score == 0
             and self.ultrasonic_valid_streak >= 3
         ):
             self.motor.command(MotorCommand.RESUME, now_ms)
-
-    def _ultrasonic_ready(self, now_ms: int) -> bool:
-        return (
-            not self.ultrasonic_safety_enabled
-            or (
-                now_ms - self.last_valid_ultrasonic_ms <= 1_000
-                and self.ultrasonic_failure_score == 0
-                and self.ultrasonic_valid_streak >= 3
-            )
-        )
-
-    def _ultrasonic_fault_event(self) -> str:
-        return {
-            UltrasonicSample.STUCK_HIGH: "ULTRASONIC_STUCK_HIGH",
-            UltrasonicSample.NO_ECHO: "ULTRASONIC_NO_ECHO",
-            UltrasonicSample.OUT_OF_RANGE: "ULTRASONIC_RANGE_ERROR",
-        }.get(self.last_ultrasonic_sample, "ULTRASONIC_NOT_READY")
 
     def keepalive(self, now_ms: int) -> None:
         if self.phase in ("MOVING", "RETURNING"):
@@ -1107,14 +1107,14 @@ class ThreeUnoMissionCoordinatorSim:
 
     def rfid(self, station: RouteStation, now_ms: int) -> str:
         outcome = self.route.rfid(station, now_ms)
-        if outcome in ("TURN_GUARD", "REPEAT_IGNORED"):
+        if outcome in ("DIRECTION_GUARD", "REPEAT_IGNORED"):
             return outcome
 
         self.motor.command(MotorCommand.STOP, now_ms)
         if outcome == "PASS":
-            # The coordinator stops to confirm the UID, then continues without
-            # changing the already-correct physical heading.
-            self.motor.command(MotorCommand.OUTBOUND, now_ms + 10)
+            # The coordinator stops to confirm the UID, then reissues the
+            # direction command: forward outbound or reverse homebound.
+            self._start_route_motor(now_ms + 10)
             self.phase = "RETURNING" if self.route.target == RouteStation.HOME else "MOVING"
         elif outcome == "TARGET":
             self.actuator.command(self.action, now_ms)
@@ -1172,7 +1172,9 @@ class ThreeUnoMissionCoordinatorSim:
 
     def _start_route_motor(self, now_ms: int) -> None:
         command = (
-            MotorCommand.RETURN if self.route.turned_last_start else MotorCommand.OUTBOUND
+            MotorCommand.RETURN
+            if self.route.heading == RouteHeading.HOMEBOUND
+            else MotorCommand.OUTBOUND
         )
         self.motor.command(command, now_ms)
 
@@ -1294,9 +1296,6 @@ class IntegrationProtocolTests(unittest.TestCase):
     def new_robot(self) -> SensorUnoSim:
         robot = SensorUnoSim()
         robot.events = TwoEventQueue()
-        # Three consecutive healthy HC-SR04 samples are the departure interlock.
-        for _ in range(3):
-            robot.obstacle_distance(100, 0)
         return robot
 
     def dispatch(self, robot: SensorUnoSim, revision: int, action: str) -> None:
@@ -1341,6 +1340,15 @@ class IntegrationProtocolTests(unittest.TestCase):
         motor.command(MotorCommand.OUTBOUND, 30)
         self.assertEqual(motor.status, MotorStatus.RUNNING)
 
+    def test_legacy_direction_values_are_invalid_even_after_v2_calibration(self) -> None:
+        motor = MotorUnoSim(calibrated=True, protocol_validated=True)
+        for sequence, legacy_value in enumerate((1, 2), start=40):
+            motor.receive_frame((legacy_value, sequence))
+            motor.process_inbox(sequence)
+            self.assertEqual(motor.active, MotorCommand.STOP)
+            self.assertEqual(motor.status, MotorStatus.INVALID)
+            self.assertEqual(motor.reply()[1:], (legacy_value, sequence))
+
     def test_stale_motor_status_cannot_ack_a_new_sequence(self) -> None:
         motor = MotorUnoSim()
         motor.receive_frame((MotorCommand.OUTBOUND, 7))
@@ -1379,12 +1387,12 @@ class IntegrationProtocolTests(unittest.TestCase):
         motor = MotorUnoSim()
         motor.receive_frame((MotorCommand.RETURN, 41))
         motor.process_inbox(100)
-        self.assertEqual(motor.return_turn_until_ms, 800)
+        self.assertTrue(motor.heading_homebound)
 
-        # A retry refreshes link liveness but must not restart the 700ms turn.
+        # A retry refreshes link liveness and must remain reverse/homebound.
         motor.receive_frame((MotorCommand.RETURN, 41))
         motor.process_inbox(300)
-        self.assertEqual(motor.return_turn_until_ms, 800)
+        self.assertTrue(motor.heading_homebound)
         self.assertEqual(motor.last_control_ms, 300)
         self.assertEqual(motor.reply()[1:], (MotorCommand.RETURN, 41))
 
@@ -1427,7 +1435,7 @@ class IntegrationProtocolTests(unittest.TestCase):
     def test_linear_route_passes_zone2_before_zone99(self) -> None:
         route = LinearRouteSim()
         route.task(RouteStation.ZONE99)
-        self.assertFalse(route.turned_last_start)
+        self.assertFalse(route.reverse_last_start)
         self.assertEqual(route.expected, RouteStation.ZONE2)
         self.assertEqual(route.rfid(RouteStation.ZONE2), "PASS")
         self.assertTrue(route.moving)
@@ -1464,15 +1472,18 @@ class IntegrationProtocolTests(unittest.TestCase):
         self.assertEqual(route.rfid(RouteStation.ZONE2, 1_000), "PASS")
 
         # The server reroutes HOME while the cart has only just left ZONE2.
-        # expected becomes ZONE2 again, so the guard must not hide a legitimate
-        # reverse-direction crossing of that same UID.
+        # expected becomes ZONE2 again. There is no 180-degree turn interval,
+        # so a legitimate reverse-direction crossing is accepted immediately.
         route.return_home(1_050)
         self.assertEqual(route.expected, RouteStation.ZONE2)
-        self.assertEqual(route.rfid(RouteStation.ZONE2, 1_100), "TURN_GUARD")
+        self.assertTrue(route.reverse_last_start)
+        self.assertEqual(route.rfid(RouteStation.ZONE2, 1_100), "DIRECTION_GUARD")
+        route.rfid_clear(1_150)
+        self.assertEqual(route.rfid(RouteStation.ZONE2, 1_899), "DIRECTION_GUARD")
         self.assertEqual(route.rfid(RouteStation.ZONE2, 1_900), "PASS")
         self.assertEqual(route.expected, RouteStation.HOME)
 
-    def test_obstacle_pause_restarts_the_rfid_turn_guard(self) -> None:
+    def test_obstacle_pause_restarts_the_direction_change_clear_guard(self) -> None:
         route = LinearRouteSim(
             confirmed=RouteStation.ZONE99,
             expected=RouteStation.ZONE99,
@@ -1480,9 +1491,13 @@ class IntegrationProtocolTests(unittest.TestCase):
             heading=RouteHeading.OUTBOUND,
         )
         route.return_home(1_000)
-        route.obstacle_pause_during_turn(1_500)
-        self.assertEqual(route.rfid(RouteStation.ZONE2, 2_200), "TURN_GUARD")
-        self.assertEqual(route.rfid(RouteStation.ZONE2, 2_350), "PASS")
+        self.assertTrue(route.reverse_last_start)
+        route.rfid_clear(1_050)
+        route.obstacle_pause_during_direction_change(1_150)
+        self.assertEqual(route.rfid(RouteStation.ZONE2, 1_999), "DIRECTION_GUARD")
+        route.rfid_clear(2_000)
+        self.assertEqual(route.rfid(RouteStation.ZONE2, 2_001), "PASS")
+        self.assertTrue(route.reverse_last_start)
 
     def test_zone99_return_passes_zone2_then_accepts_home_stop_line(self) -> None:
         route = LinearRouteSim(
@@ -1492,8 +1507,9 @@ class IntegrationProtocolTests(unittest.TestCase):
             heading=RouteHeading.OUTBOUND,
         )
         route.return_home()
-        self.assertTrue(route.turned_last_start)
+        self.assertTrue(route.reverse_last_start)
         self.assertEqual(route.expected, RouteStation.ZONE2)
+        route.rfid_clear(100)
         self.assertEqual(route.rfid(RouteStation.ZONE2, 850), "PASS")
         self.assertEqual(route.expected, RouteStation.HOME)
         self.assertEqual(route.stop_line(), "HOME")
@@ -1537,16 +1553,17 @@ class IntegrationProtocolTests(unittest.TestCase):
         self.assertEqual(actuator.status, ActuatorStatus.DONE)
         actuator.command(ActuatorCommand.STOP, 13_030)
 
-        # A normal server reading changes the command to RETURN_HOME.  RETURN
-        # turns once at ZONE99; STOP+OUTBOUND at intermediate ZONE2 must preserve
-        # that HOMEBOUND physical heading until the HOME-only marker is reached.
+        # A normal server reading changes the command to RETURN_HOME. RETURN is
+        # physical reverse; after STOP at intermediate ZONE2 it must be reissued
+        # as RETURN (not OUTBOUND) until the HOME-only marker is reached.
         route.return_home(13_100)
         motor.command(MotorCommand.RETURN, 13_100)
-        self.assertTrue(route.turned_last_start)
+        self.assertTrue(route.reverse_last_start)
         self.assertTrue(motor.heading_homebound)
+        route.rfid_clear(13_300)
         self.assertEqual(route.rfid(RouteStation.ZONE2, 13_950), "PASS")
         motor.command(MotorCommand.STOP, 13_950)
-        motor.command(MotorCommand.OUTBOUND, 13_960)
+        motor.command(MotorCommand.RETURN, 13_960)
         self.assertTrue(motor.heading_homebound)
 
         motor.observe_line(False, False, 14_000)
@@ -1615,6 +1632,7 @@ class IntegrationProtocolTests(unittest.TestCase):
         self.assertEqual(car.phase, "RETURNING")
         self.assertTrue(car.motor.heading_homebound)
         self.assertEqual(car.route.expected, RouteStation.ZONE2)
+        car.route.rfid_clear(13_300)
         self.assertEqual(car.rfid(RouteStation.ZONE2, 13_950), "PASS")
         self.assertEqual(car.phase, "RETURNING")
         self.assertEqual(car.route.expected, RouteStation.HOME)
@@ -1685,6 +1703,7 @@ class IntegrationProtocolTests(unittest.TestCase):
 
                     home_base = completed_ms + 1_000
                     if target == RouteStation.ZONE99:
+                        car.route.rfid_clear(completed_ms + 250)
                         self.assertEqual(
                             car.rfid(RouteStation.ZONE2, home_base), "PASS"
                         )
@@ -1738,7 +1757,7 @@ class IntegrationProtocolTests(unittest.TestCase):
         self.assertTrue(manual.moving)
         self.assertFalse(manual.route_known)
 
-    def test_return_reroute_continues_ahead_or_turns_for_station_behind(self) -> None:
+    def test_return_reroute_continues_reverse_or_switches_back_to_forward(self) -> None:
         ahead = LinearRouteSim(
             confirmed=RouteStation.ZONE99,
             expected=RouteStation.ZONE2,
@@ -1748,7 +1767,7 @@ class IntegrationProtocolTests(unittest.TestCase):
             moving=True,
         )
         ahead.task(RouteStation.ZONE2)
-        self.assertFalse(ahead.turned_last_start)
+        self.assertTrue(ahead.reverse_last_start)
         self.assertEqual(ahead.heading, RouteHeading.HOMEBOUND)
 
         behind = LinearRouteSim(
@@ -1760,7 +1779,7 @@ class IntegrationProtocolTests(unittest.TestCase):
             moving=True,
         )
         behind.task(RouteStation.ZONE99)
-        self.assertTrue(behind.turned_last_start)
+        self.assertFalse(behind.reverse_last_start)
         self.assertEqual(behind.heading, RouteHeading.OUTBOUND)
         self.assertEqual(behind.expected, RouteStation.ZONE99)
 
@@ -1822,29 +1841,19 @@ class IntegrationProtocolTests(unittest.TestCase):
             (robot.events.pending, robot.events.deferred),
         )
 
-    def test_outbound_marker_clear_timeout_starts_after_700ms_turn(self) -> None:
+    def test_outbound_marker_clear_timeout_starts_without_a_turn_delay(self) -> None:
         motor = MotorUnoSim()
-        # A cart parked at HOME normally points homebound after arrival.  The
-        # RETURN command flips it outbound; only that direction may clear the
-        # HOME marker under power.
-        motor.heading_homebound = True
-        motor.command(MotorCommand.RETURN, 100)
-        motor.observe_line(True, True, 799)
-        self.assertFalse(motor.line_following_started)
-        self.assertEqual(motor.status, MotorStatus.RUNNING)
-
-        motor.observe_line(True, True, 800)
+        motor.command(MotorCommand.OUTBOUND, 100)
+        motor.observe_line(True, True, 100)
         self.assertTrue(motor.departure_clearing)
-        motor.observe_line(True, True, 2_799)
+        motor.observe_line(True, True, 2_099)
         self.assertEqual(motor.status, MotorStatus.RUNNING)
-        motor.observe_line(True, True, 2_800)
+        motor.observe_line(True, True, 2_100)
         self.assertEqual(motor.status, MotorStatus.UNEXPECTED_MARKER)
 
     def test_homebound_restart_on_home_marker_stays_stopped(self) -> None:
         motor = MotorUnoSim(heading_homebound=True)
-        # OUTBOUND means continue the current physical heading in this
-        # protocol.  It is used by a same-direction retry and manual FWD.
-        motor.command(MotorCommand.OUTBOUND, 0)
+        motor.command(MotorCommand.RETURN, 0)
         motor.observe_line(True, True, 0)
         self.assertFalse(motor.departure_clearing)
         self.assertTrue(motor.stop_line_detection_armed)
@@ -1855,7 +1864,7 @@ class IntegrationProtocolTests(unittest.TestCase):
 
     def test_pause_after_home_marker_cannot_hide_stop_line(self) -> None:
         motor = MotorUnoSim(heading_homebound=True)
-        motor.command(MotorCommand.OUTBOUND, 0)
+        motor.command(MotorCommand.RETURN, 0)
         motor.observe_line(True, True, 0)
         motor.observe_line(True, True, 300)
         self.assertEqual(motor.status, MotorStatus.STOP_LINE)
@@ -2015,9 +2024,12 @@ class IntegrationProtocolTests(unittest.TestCase):
         self.assertEqual(robot.phase, "TASK_COMPLETE")
         self.assertEqual(robot.result, "FAILED")
 
-    def test_ultrasonic_safety_model_when_enabled_obstacle_resume_and_watchdog(self) -> None:
+    def test_rear_ultrasonic_pauses_only_reverse_and_resumes_after_three_clear(self) -> None:
         robot = self.new_robot()
         self.dispatch(robot, 4, "NONE")
+        self.assertTrue(robot.command(5, "RETURN_HOME", "HOME", "NONE", 100))
+        self.assertEqual(robot.phase, "RETURNING")
+        self.assertTrue(robot.motor.heading_homebound)
         robot.obstacle_distance(10, 200)
         self.assertEqual(robot.motor.status, MotorStatus.OBSTACLE)
         robot.obstacle_distance(16, 300)  # hysteresis band: remain paused
@@ -2035,13 +2047,9 @@ class IntegrationProtocolTests(unittest.TestCase):
         robot.process_motor_status(3_901)
         self.assertEqual(robot.result, "FAILED")
 
-    def test_demo_monitor_only_ultrasonic_does_not_gate_or_pause_motion(self) -> None:
-        robot = SensorUnoSim(
-            events=TwoEventQueue(), ultrasonic_safety_enabled=False
-        )
-        # The current demo intentionally permits departure without any valid
-        # echo and continues to log close/fault samples without commanding the
-        # MotorUno PAUSE path.
+    def test_rear_ultrasonic_is_monitor_only_during_forward_motion(self) -> None:
+        robot = SensorUnoSim(events=TwoEventQueue())
+        # A close object behind the robot must not pause an outbound/forward run.
         self.assertTrue(robot.command(401, "TASK", "ZONE2", "NONE", 0))
         self.assertEqual(robot.phase, "MOVING")
         robot.obstacle_distance(5, 150)
@@ -2051,73 +2059,48 @@ class IntegrationProtocolTests(unittest.TestCase):
         self.assertEqual(robot.phase, "MOVING")
         self.assertEqual(robot.motor.status, MotorStatus.RUNNING)
 
-    def test_ultrasonic_safety_model_when_enabled_no_echo_stops_motion(self) -> None:
+    def test_no_echo_is_nonfatal_and_does_not_gate_reverse_departure(self) -> None:
         robot = self.new_robot()
         self.dispatch(robot, 40, "NONE")
-        robot.obstacle_distance(10, 100)
-        self.assertEqual(robot.motor.status, MotorStatus.OBSTACLE)
-        robot.obstacle_distance(None, 250)
-        self.assertEqual(robot.motor.status, MotorStatus.OBSTACLE)
-        robot.obstacle_distance(500, 400)
-        self.assertEqual(robot.motor.status, MotorStatus.OBSTACLE)
-        robot.obstacle_distance(None, 550)
-        self.assertEqual(robot.phase, "TASK_COMPLETE")
-        self.assertEqual(robot.result, "FAILED")
-        self.assertEqual(robot.motor.status, MotorStatus.IDLE)
-        self.assertIn(
-            "ULTRASONIC_NO_ECHO",
-            (robot.events.pending, robot.events.deferred),
-        )
+        for now_ms in (100, 250, 400):
+            robot.obstacle_distance(None, now_ms)
+        self.assertTrue(robot.command(41, "RETURN_HOME", "HOME", "NONE", 550))
+        self.assertEqual(robot.phase, "RETURNING")
+        self.assertEqual(robot.motor.status, MotorStatus.RUNNING)
+        for now_ms in (700, 850, 1_000):
+            robot.obstacle_distance(None, now_ms)
+        self.assertEqual(robot.phase, "RETURNING")
+        self.assertEqual(robot.motor.status, MotorStatus.RUNNING)
 
-    def test_ultrasonic_safety_model_when_enabled_stuck_high_stops_motion(self) -> None:
+    def test_stuck_high_blocks_reverse_start_and_pauses_an_active_reverse(self) -> None:
         robot = self.new_robot()
         self.dispatch(robot, 45, "NONE")
-        robot.ultrasonic_sample(UltrasonicSample.STUCK_HIGH, None, 150)
+        robot.ultrasonic_sample(UltrasonicSample.STUCK_HIGH, None, 50)
+        self.assertTrue(robot.command(46, "RETURN_HOME", "HOME", "NONE", 100))
         self.assertEqual(robot.phase, "TASK_COMPLETE")
         self.assertEqual(robot.result, "FAILED")
-        self.assertEqual(robot.motor.status, MotorStatus.IDLE)
-        self.assertIn(
-            "ULTRASONIC_STUCK_HIGH",
-            (robot.events.pending, robot.events.deferred),
-        )
+        self.assertEqual(robot.motor.active, MotorCommand.STOP)
 
-    def test_ultrasonic_safety_model_when_enabled_sparse_echo_still_faults(self) -> None:
+        robot = self.new_robot()
+        self.dispatch(robot, 47, "NONE")
+        self.assertTrue(robot.command(48, "RETURN_HOME", "HOME", "NONE", 100))
+        robot.ultrasonic_sample(UltrasonicSample.STUCK_HIGH, None, 150)
+        self.assertEqual(robot.phase, "RETURNING")
+        self.assertEqual(robot.motor.status, MotorStatus.OBSTACLE)
+
+    def test_invalid_echo_while_obstacle_paused_requires_new_clear_streak(self) -> None:
         robot = self.new_robot()
         self.dispatch(robot, 46, "NONE")
-        robot.ultrasonic_sample(UltrasonicSample.NO_ECHO, None, 150)
-        robot.ultrasonic_sample(UltrasonicSample.NO_ECHO, None, 300)
-        robot.obstacle_distance(60, 450)  # one plausible but possibly spurious echo
-        self.assertEqual(robot.ultrasonic_failure_score, 1)
-        self.assertEqual(robot.ultrasonic_valid_streak, 1)
-        robot.ultrasonic_sample(UltrasonicSample.NO_ECHO, None, 600)
-        robot.ultrasonic_sample(UltrasonicSample.NO_ECHO, None, 750)
-        self.assertEqual(robot.phase, "TASK_COMPLETE")
-        self.assertEqual(robot.motor.status, MotorStatus.IDLE)
-
-    def test_ultrasonic_safety_model_when_enabled_requires_three_echoes(self) -> None:
-        one_echo = SensorUnoSim(events=TwoEventQueue())
-        one_echo.obstacle_distance(60, 0)
-        self.assertTrue(one_echo.command(47, "TASK", "ZONE2", "NONE", 0))
-        self.assertEqual(one_echo.phase, "TASK_COMPLETE")
-        self.assertEqual(one_echo.events.pending, "ULTRASONIC_NOT_READY")
-
-        healthy = SensorUnoSim(events=TwoEventQueue())
-        for now_ms in (0, 150, 300):
-            healthy.obstacle_distance(60, now_ms)
-        self.assertTrue(healthy.command(48, "TASK", "ZONE2", "NONE", 300))
-        self.assertEqual(healthy.phase, "MOVING")
-
-    def test_ultrasonic_safety_model_when_enabled_rejects_stale_echo(self) -> None:
-        robot = SensorUnoSim(events=TwoEventQueue())
-        self.assertTrue(robot.command(41, "TASK", "ZONE2", "HUMIDIFY", 0))
-        self.assertEqual(robot.phase, "TASK_COMPLETE")
-        self.assertEqual(robot.result, "FAILED")
-        self.assertEqual(robot.events.pending, "ULTRASONIC_NOT_READY")
-
-        stale = self.new_robot()
-        self.assertTrue(stale.command(42, "TASK", "ZONE2", "HUMIDIFY", 1_001))
-        self.assertEqual(stale.phase, "TASK_COMPLETE")
-        self.assertEqual(stale.motor.status, MotorStatus.IDLE)
+        self.assertTrue(robot.command(47, "RETURN_HOME", "HOME", "NONE", 100))
+        robot.obstacle_distance(10, 150)
+        self.assertTrue(robot.motor.paused)
+        robot.obstacle_distance(30, 300)
+        robot.obstacle_distance(None, 450)  # resets the clear streak, but is nonfatal
+        robot.obstacle_distance(30, 600)
+        robot.obstacle_distance(30, 750)
+        self.assertTrue(robot.motor.paused)
+        robot.obstacle_distance(30, 900)
+        self.assertFalse(robot.motor.paused)
 
     def test_all_stop_turns_off_every_output_and_cancels_task(self) -> None:
         robot = self.new_robot()
@@ -2398,7 +2381,7 @@ class IntegrationProtocolTests(unittest.TestCase):
                 self.assertFalse(recovery.poll_same_revision())
                 self.assertEqual(recovery.restart_count, 1)
 
-    def test_server_loss_during_uncertain_turn_never_retries_same_revision(self) -> None:
+    def test_server_loss_with_unknown_route_never_retries_same_revision(self) -> None:
         recovery = SameRevisionRecoverySim(
             command="TASK", phase="MOVING", route_known=False
         )
@@ -2432,7 +2415,7 @@ class IntegrationProtocolTests(unittest.TestCase):
             robot.obstacle_distance(100, now_ms)
         self.assertTrue(robot.command(9, "RETURN_HOME", "HOME", "NONE", 6_100))
         self.assertEqual(robot.phase, "RETURNING")
-        # 700ms return spin, clear the zone marker, then find HOME's marker.
+        # RETURN drives straight backward; after leaving the zone, find HOME.
         robot.motor.observe_line(True, True, 6_800)
         robot.motor.observe_line(False, False, 6_900)
         robot.motor.observe_line(True, True, 7_000)
@@ -2458,6 +2441,9 @@ class FirmwareSourceContractTests(unittest.TestCase):
         cls.actuator = ACTUATOR_SOURCE.read_text(encoding="utf-8")
         cls.network = NETWORK_SOURCE.read_text(encoding="utf-8")
         cls.sensor_diagnostic = SENSOR_DIAGNOSTIC_SOURCE.read_text(encoding="utf-8")
+        cls.zone2_drive_diagnostic = ZONE2_DRIVE_DIAGNOSTIC_SOURCE.read_text(
+            encoding="utf-8"
+        )
 
     def assert_source(self, source: str, pattern: str) -> None:
         self.assertRegex(source, pattern)
@@ -2502,10 +2488,38 @@ class FirmwareSourceContractTests(unittest.TestCase):
 
     def test_home_calibration_interlock_blocks_boot_assumptions_and_motion(self) -> None:
         for source in (self.sensor, self.motor):
+            self.assert_source(source, r"(?:MOTOR_)?COMMAND_OUTBOUND\s*=\s*0x11")
+            self.assert_source(
+                source, r"(?:MOTOR_)?COMMAND_(?:RETURN|REVERSE_HOME)\s*=\s*0x12"
+            )
             self.assert_source(source, r"(?:MOTOR_)?COMMAND_HOME_SYNC\s*=\s*6")
+            self.assert_source(source, r"(?:MOTOR_)?COMMAND_PROTOCOL_SYNC\s*=\s*7")
             self.assert_source(
                 source, r"(?:MOTOR_)?STATUS_CALIBRATION_REQUIRED\s*=\s*7"
             )
+            self.assert_source(
+                source, r"(?:MOTOR_)?STATUS_PROTOCOL_REQUIRED\s*=\s*8"
+            )
+
+        self.assert_source(
+            self.zone2_drive_diagnostic, r"MOTOR_FORWARD\s*=\s*0x11"
+        )
+        self.assert_source(
+            self.zone2_drive_diagnostic, r"MOTOR_PROTOCOL_SYNC\s*=\s*7"
+        )
+        diagnostic_setup = self.zone2_drive_diagnostic[
+            self.zone2_drive_diagnostic.index("void setup()") :
+        ]
+        self.assertLess(
+            diagnostic_setup.index('stopMotorConfirmed(F("diagnostic boot"))'),
+            diagnostic_setup.index("rfid.PCD_Init()"),
+        )
+        self.assertLess(
+            diagnostic_setup.index("stopActuatorBestEffort()"),
+            diagnostic_setup.index("rfid.PCD_Init()"),
+        )
+        self.assertIn("ACTUATOR_CONTROL_MAGIC = 0xA5", self.zone2_drive_diagnostic)
+        self.assertNotIn("Serial.println(uidText)", self.zone2_drive_diagnostic)
 
         self.assert_source(self.sensor, r"bool\s+routeCalibrated\s*=\s*false")
         self.assert_source(
@@ -2517,20 +2531,29 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assertIn("bool requireHomeCalibration()", self.sensor)
         self.assertIn("if (!requireHomeCalibration()) return false;", self.sensor)
         self.assertIn('PSTR("CALIBRATE_HOME")', self.sensor)
+        self.assertIn(
+            "sendMotorCommandChecked(MOTOR_COMMAND_PROTOCOL_SYNC)", self.sensor
+        )
         self.assertIn("sendMotorCommandChecked(MOTOR_COMMAND_HOME_SYNC)", self.sensor)
         self.assertIn("status == MOTOR_STATUS_IDLE;", self.sensor)
         self.assertIn("command == 'C' || command == 'c'", self.sensor)
+        self.assertNotIn("Serial.println(uidText)", self.sensor)
+        self.assertIn("[RFID] ARRIVAL CONFIRMED station=", self.sensor)
 
         calibration_start = self.sensor.index("bool performHomeCalibration()")
         calibration_end = self.sensor.index(
             "bool startPlaceholderMovement()", calibration_start
         )
         calibration_body = self.sensor[calibration_start:calibration_end]
+        protocol_sync = calibration_body.index(
+            "sendMotorCommandChecked(MOTOR_COMMAND_PROTOCOL_SYNC)"
+        )
         motor_stop = calibration_body.index("stopMotorController()")
         actuator_stop = calibration_body.index("stopModuleController()")
         home_sync = calibration_body.index(
             "sendMotorCommandChecked(MOTOR_COMMAND_HOME_SYNC)"
         )
+        self.assertLess(protocol_sync, motor_stop)
         self.assertLess(motor_stop, actuator_stop)
         self.assertLess(actuator_stop, home_sync)
         self.assertIn("motorStopped && moduleStopped", calibration_body)
@@ -2549,7 +2572,10 @@ class FirmwareSourceContractTests(unittest.TestCase):
         apply_end = self.motor.index("void followLine()", apply_start)
         apply_body = self.motor[apply_start:apply_end]
         self.assertIn("if (!calibrated)", apply_body)
+        self.assertIn("if (!protocolValidated)", apply_body)
+        self.assertIn("isValidControlCommand(command)", apply_body)
         self.assertIn("STATUS_CALIBRATION_REQUIRED", apply_body)
+        self.assertIn("STATUS_PROTOCOL_REQUIRED", apply_body)
 
     def test_same_revision_never_restarts_a_completed_module_without_server_grant(self) -> None:
         same_start = self.sensor.index("if (nextRevision == lastCommandRevision)")
@@ -2759,13 +2785,14 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assert_source(self.sensor, r"WIFI_RECONNECT_INTERVAL_MS\s*=\s*15000")
         self.assert_source(self.sensor, r"ULTRASONIC_MIN_VALID_CM\s*=\s*2")
         self.assert_source(self.sensor, r"ULTRASONIC_MAX_VALID_CM\s*=\s*400")
-        self.assert_source(self.sensor, r"ULTRASONIC_FAILURE_LIMIT\s*=\s*3")
         self.assert_source(self.sensor, r"ULTRASONIC_VALID_STREAK_REQUIRED\s*=\s*3")
         self.assertIn("attachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN)", self.sensor)
         self.assertIn("onUltrasonicEchoChange", self.sensor)
         self.assertIn("ULTRASONIC_SAMPLE_STUCK_HIGH", self.sensor)
-        self.assertIn('F("ULTRASONIC_STUCK_HIGH")', self.sensor)
-        self.assertIn('F("ULTRASONIC_NO_ECHO")', self.sensor)
+        self.assertIn(
+            'F("[BOOT] NO_ECHO=diagnostic; STUCK_HIGH=reverse stop")',
+            self.sensor,
+        )
         self.assertNotIn("pulseIn(ULTRASONIC_ECHO_PIN", self.sensor)
         self.assertIn("FAULT=ECHO_STUCK_HIGH_BEFORE_TRIGGER", self.sensor_diagnostic)
         self.assertIn("FAULT=NO_ECHO_RISE", self.sensor_diagnostic)
@@ -2784,7 +2811,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
             "PAUSE must not overwrite STATUS_STOP_LINE after HOME was latched",
         )
 
-    def test_current_demo_uses_monitor_only_ultrasonic_and_115200_usb_logs(self) -> None:
+    def test_rear_ultrasonic_gates_reverse_start_and_controls_only_reverse(self) -> None:
         self.assert_source(self.sensor, r"USB_SERIAL_BAUD\s*=\s*115200")
         self.assertIn("Serial.begin(USB_SERIAL_BAUD);", self.sensor)
         self.assert_source(self.sensor, r"#define\s+VERBOSE_OPERATION_LOGS\s+0")
@@ -2801,25 +2828,32 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assert_source(
             self.sensor, r"DISTANCE_LOG_INTERVAL_MS\s*=\s*5000"
         )
-        self.assert_source(
-            self.sensor, r"ULTRASONIC_SAFETY_ENABLED\s*=\s*false"
-        )
-
-        ready_start = self.sensor.index("bool ultrasonicReadyForMovement()")
-        ready_end = self.sensor.index("void updateObstacleSensor()", ready_start)
-        self.assertIn(
-            "return !ULTRASONIC_SAFETY_ENABLED ||",
-            self.sensor[ready_start:ready_end],
-        )
-
-        obstacle_start = ready_end
+        self.assertNotIn("ultrasonicReadyForMovement", self.sensor)
+        self.assertNotIn("rejectMovementForUltrasonic", self.sensor)
+        obstacle_start = self.sensor.index("void updateObstacleSensor()")
         obstacle_end = self.sensor.index("void serviceMotorLink()", obstacle_start)
         obstacle_body = self.sensor[obstacle_start:obstacle_end]
-        bypass = obstacle_body.index("if (!ULTRASONIC_SAFETY_ENABLED)")
-        safety = obstacle_body.index("const bool robotIsMoving")
-        self.assertLess(bypass, safety)
-        self.assertIn("obstaclePauseActive = false;", obstacle_body[bypass:safety])
-        self.assertIn("return;", obstacle_body[bypass:safety])
+        self.assertIn("routeHeading == HEADING_HOMEBOUND", obstacle_body)
+        self.assertIn(
+            "const bool reverseCommandApplied", obstacle_body
+        )
+        self.assertIn("MOTOR_COMMAND_PAUSE", obstacle_body)
+        self.assertIn("MOTOR_COMMAND_RESUME", obstacle_body)
+        self.assertIn("if (!robotIsReversing) return;", obstacle_body)
+        self.assertIn("reversePauseRequired", obstacle_body)
+        self.assertIn("ULTRASONIC_SAMPLE_STUCK_HIGH", obstacle_body)
+        self.assertIn("obstacleDistanceCm < OBSTACLE_STOP_CM", obstacle_body)
+        self.assertIn("obstacleDistanceCm >= OBSTACLE_CLEAR_CM", obstacle_body)
+        self.assertIn("ULTRASONIC_VALID_STREAK_REQUIRED", obstacle_body)
+        self.assertNotIn("stopMotorController();", obstacle_body)
+        self.assertNotIn("robotPhase = PHASE_TASK_COMPLETE", obstacle_body)
+
+        return_start = self.sensor.index("bool startPlaceholderReturn()")
+        return_end = self.sensor.index("bool startPlaceholderModule(", return_start)
+        return_body = self.sensor[return_start:return_end]
+        self.assertIn("rearSampleFresh", return_body)
+        self.assertIn("rearStartBlocked", return_body)
+        self.assertIn('queueRobotReport(F("REVERSE_START_BLOCKED"))', return_body)
 
     def test_failed_tcp_stages_are_closed_before_the_next_poll(self) -> None:
         close_start = self.sensor.index("bool closeTcpAfterFailure()")
@@ -2920,7 +2954,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assertNotIn('setCommandResult(F("SERVER_OFFLINE"))', self.sensor)
         self.assertRegex(
             self.sensor,
-            r"MOTOR_FWD[\s\S]*?ultrasonicReadyForMovement\(\)[\s\S]*?startMotorController\(false\)",
+            r"MOTOR_FWD[\s\S]*?startMotorController\(HEADING_OUTBOUND\)",
         )
         self.assertNotIn("obstacleDistanceCm < 0 ||", self.sensor)
         self.assertIn("appliedCommand == expectedActuatorCommand", self.sensor)
@@ -2932,7 +2966,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
         route_body = self.sensor[start:end]
         self.assertIn("RouteHeading nextHeading = routeHeading;", route_body)
         self.assertIn("RouteStation nextExpected = expectedStation;", route_body)
-        failed_start = route_body.index("if (!startMotorController(turnAround))")
+        failed_start = route_body.index("if (!startMotorController(nextHeading))")
         committed_heading = route_body.index("routeHeading = nextHeading;")
         self.assertLess(failed_start, committed_heading)
         failure_body = route_body[failed_start:committed_heading]
@@ -2956,10 +2990,8 @@ class FirmwareSourceContractTests(unittest.TestCase):
         stop_start = self.sensor.index("bool stopMotorController()")
         stop_end = self.sensor.index("bool startMotorController", stop_start)
         stop_body = self.sensor[stop_start:stop_end]
-        self.assertIn("turnPositionUncertain", stop_body)
         self.assertIn("obstaclePauseActive", stop_body)
-        self.assertIn("RFID_TURN_GUARD_MS", stop_body)
-        self.assertIn("if (turnPositionUncertain) latchRouteUnknown();", stop_body)
+        self.assertNotIn("latchRouteUnknown();", stop_body)
 
         fault_start = self.sensor.index("void applyMotorLinkState()")
         fault_end = self.sensor.index("void stopSafelyForServerLoss()", fault_start)
@@ -3022,7 +3054,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
         ]
         self.assertEqual(http_services, sorted(http_services))
         self.assert_source(self.sensor, r"RFID_SCAN_INTERVAL_MS\s*=\s*40")
-        self.assert_source(self.sensor, r"RFID_TURN_GUARD_MS\s*=\s*850")
+        self.assert_source(self.sensor, r"RFID_DIRECTION_SETTLE_MS\s*=\s*850")
         self.assert_source(self.sensor, r"espBuffer\[128\]")
         self.assertIn("if (!routeMoving || manualForwardActive) return;", self.sensor)
         process_start = self.sensor.index(
@@ -3052,16 +3084,16 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assertIn("scannedStation != expectedStation", repeat_guard)
         self.assertNotIn("lastAcceptedRfidAt", repeat_guard)
         self.assertNotIn("RFID_REPEAT_GUARD_MS", repeat_guard)
-        self.assertIn("if (obstaclePauseActive)", self.sensor)
-        self.assertIn("rfidTurnGuardStartedAt = millis();", self.sensor)
+        self.assertIn("rfidDirectionGuardStartedAt = millis();", self.sensor)
+        self.assertIn("rfidDirectionClearSeen = true;", self.sensor)
 
-    def test_rfid_turn_guard_cannot_be_bypassed_by_test_injection(self) -> None:
-        """All RFID entry points must share the same partial-turn interlock.
+    def test_rfid_direction_guard_cannot_be_bypassed_by_test_injection(self) -> None:
+        """All RFID entry points share the same tag-clear interlock.
 
         Both the web RFID_TEST command and the USB ``T`` command call
         processRouteRfid() directly.  Keeping the guard in that central function
-        prevents either diagnostic path from accepting a synthetic arrival while
-        the chassis heading is still physically uncertain.
+        prevents either diagnostic path from accepting the old tag immediately
+        after forward/reverse direction changes.
         """
         # Skip the forward declaration near the top of the sketch and inspect
         # the actual function definition.
@@ -3070,9 +3102,10 @@ class FirmwareSourceContractTests(unittest.TestCase):
         )
         end = self.sensor.index("void checkRfidArrival()", start)
         body = self.sensor[start:end]
-        guard = body.index("rfidTurnGuardActive")
+        guard = body.index("rfidDirectionGuardActive")
         stop = body.index("stopMotorController()")
         self.assertLess(guard, stop)
+        self.assertIn("!rfidDirectionClearSeen", body[guard:stop])
 
     def test_failed_rc522_is_an_automatic_departure_interlock(self) -> None:
         """A robot that cannot identify stations must never start a TASK route."""
@@ -3145,7 +3178,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assertIn("latchRouteUnknown();", manual_body)
         self.assertLess(
             manual_body.index("latchRouteUnknown();"),
-            manual_body.index("startMotorController(false)"),
+            manual_body.index("startMotorController(HEADING_OUTBOUND)"),
         )
 
     def test_failed_stop_ack_uses_a_local_independent_retry_latch(self) -> None:

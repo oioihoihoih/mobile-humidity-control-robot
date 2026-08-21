@@ -32,6 +32,19 @@ BUILD_MANIFEST = "firmware/build-manifest.json"
 LCD_EXPANDER_ID = "I2CToParallel-4"
 LCD_ID = "Hd44780-5"
 
+# SimulIDE 전용 출력 핀이다. 실제 AFMotor shield 핀맵이 아니라 M1~M4 각
+# 채널이 FORWARD/REVERSE 중 어느 논리 상태인지 독립적으로 보여준다.
+MOTOR_LED_PIN_MAP = {
+    "Led-Motor-M1-F": "2",
+    "Led-Motor-M1-R": "3",
+    "Led-Motor-M2-F": "4",
+    "Led-Motor-M2-R": "5",
+    "Led-Motor-M3-F": "6",
+    "Led-Motor-M3-R": "7",
+    "Led-Motor-M4-F": "8",
+    "Led-Motor-M4-R": "11",
+}
+
 
 class DisjointSet:
     def __init__(self) -> None:
@@ -225,6 +238,25 @@ def validate(path: Path) -> list[str]:
     if lcd_sda_root in hardware_bus_roots or lcd_scl_root in hardware_bus_roots:
         fail(errors, "LCD D4/D5 bus must be isolated from hardware-I2C A4/A5")
 
+    # M1/M3=LEFT, M2/M4=RIGHT인 실제 4채널 구성을 방향별 LED 8개로
+    # 표시한다. 구형 좌/우 2채널 묶음이 섞이면 reverse-home 검증이 모호해진다.
+    for led_id, pin_number in MOTOR_LED_PIN_MAP.items():
+        if led_id not in component_by_id:
+            fail(errors, f"4WD motor direction LED is missing: {led_id}")
+            continue
+        uno_pin = f"Uno-2-{pin_number}"
+        led_pin = f"{led_id}-lPin"
+        if uno_pin not in used_pins or led_pin not in used_pins:
+            fail(errors, f"{led_id}: MotorUno D{pin_number} connection is missing")
+        elif network.find(uno_pin) != network.find(led_pin):
+            fail(errors, f"{led_id}: not connected to MotorUno D{pin_number}")
+
+    legacy_motor_leds = {
+        "Led-Motor-LF", "Led-Motor-RF", "Led-Motor-LR", "Led-Motor-RR"
+    }
+    if legacy_motor_leds & component_id_set:
+        fail(errors, "legacy left/right 2-channel motor proxy LEDs must be removed")
+
     for address_bit, ground_id in zip(
         ("in2", "in3", "in4"),
         ("Ground-LCD-A0", "Ground-LCD-A1", "Ground-LCD-A2"),
@@ -272,16 +304,28 @@ def validate(path: Path) -> list[str]:
     # 컴파일을 대신하지 않지만 오래된 HEX/프로토콜 파일이 섞이는 실수를 잡는다.
     expected_source_tokens = {
         "Uno-1": (
+            "MOTOR_OUTBOUND = 0x11",
+            "MOTOR_REVERSE_HOME = 0x12",
             "MOTOR_HOME_SYNC = 6",
+            "MOTOR_PROTOCOL_SYNC = 7",
             "MOTOR_CALIBRATION_REQUIRED = 7",
+            "MOTOR_PROTOCOL_REQUIRED = 8",
             "bool routeCalibrated = false",
             "ACTUATOR_CONTROL_MAGIC = 0xA5",
             "STATUS_REPLY_SIZE = 6",
         ),
         "Uno-2": (
+            "COMMAND_OUTBOUND = 0x11",
+            "COMMAND_RETURN = 0x12",
             "COMMAND_HOME_SYNC = 6",
+            "COMMAND_PROTOCOL_SYNC = 7",
             "STATUS_CALIBRATION_REQUIRED = 7",
+            "STATUS_PROTOCOL_REQUIRED = 8",
             "bool calibrated = false",
+            "bool headingHomebound = false",
+            "M1_FORWARD_LED = 2",
+            "M4_REVERSE_LED = 11",
+            "DIRECTION_CHANGE_DEAD_TIME_MS = 120",
             "STATUS_BYTE_SELECT_BASE = 0xE0",
         ),
         "Uno-3": (
@@ -296,6 +340,10 @@ def validate(path: Path) -> list[str]:
         for token in tokens:
             if token not in source:
                 fail(errors, f"{uno_id}: missing proxy protocol token {token!r}")
+
+    for uno_id in ("Uno-1", "Uno-2"):
+        if "TURN_AROUND" in sketch_sources.get(uno_id, ""):
+            fail(errors, f"{uno_id}: obsolete TURN_AROUND semantics remain in proxy source")
 
     home_button = component_by_id.get("Push-Home")
     if home_button is None:
@@ -338,7 +386,8 @@ def main() -> int:
     print("- Uno-1/Uno-2/Uno-3 device IDs valid")
     print("- I2C A4/A5 shared nets valid")
     print("- LCD D5/D4 software-I2C net is isolated and mapped to PCF8574/Hd44780")
-    print("- HOME_SYNC/status7 boot interlock and 4B/6B actuator proxy contracts present")
+    print("- MotorUno M1-M4 forward/reverse LED nets and straight reverse-home semantics valid")
+    print("- protocol-v2/status8 and HOME_SYNC/status7 interlocks present")
     print("- CALIBRATE_HOME/HOME proxy input is connected to SensorUno D13")
     print("- connector endpoints unique and known")
     print("- all three firmware HEX/source hashes match the build manifest")

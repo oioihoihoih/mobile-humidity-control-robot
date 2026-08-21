@@ -5,6 +5,7 @@ firmware/uno_robot_esp01_rfid_relay/robot_network_config.h
 firmware/uno_server_gateway_esp01/gateway_network_config.h
 firmware/zone2_esp01_direct/secrets.h
 firmware/zone99_esp01_dht11/secrets.h
+firmware/uno_zone2_rfid_drive_diagnostic/zone2_rfid_drive_config.h
 
 # Runtime data and local build output
 server/robot.db
@@ -29,6 +30,7 @@ server/dashboard-*.png
 # files referenced by its current or explicitly labelled legacy circuits.
 deploy/*.tar
 deploy/*.zip
+deploy/*.sha256
 server/SHA256SUMS.txt
 /firmware/**/*.hex
 *.elf

@@ -31,12 +31,15 @@ constexpr unsigned long USB_SERIAL_BAUD = 115200;
 constexpr byte MOTOR_UNO_ADDRESS = 0x08;
 constexpr byte ACTUATOR_UNO_ADDRESS = 0x09;
 constexpr byte MOTOR_COMMAND_STOP = 0;
-constexpr byte MOTOR_COMMAND_OUTBOUND = 1;
-constexpr byte MOTOR_COMMAND_RETURN = 2;
+// 구형 1/2와 값 자체를 분리해 SensorUno/MotorUno 부분 업로드나 downgrade가
+// 반대 방향 주행으로 이어지지 않게 한다.
+constexpr byte MOTOR_COMMAND_OUTBOUND = 0x11;
+constexpr byte MOTOR_COMMAND_RETURN = 0x12;
 constexpr byte MOTOR_COMMAND_PAUSE = 3;
 constexpr byte MOTOR_COMMAND_RESUME = 4;
 constexpr byte MOTOR_COMMAND_KEEPALIVE = 5;
 constexpr byte MOTOR_COMMAND_HOME_SYNC = 6;
+constexpr byte MOTOR_COMMAND_PROTOCOL_SYNC = 7;
 constexpr byte MOTOR_STATUS_IDLE = 0;
 constexpr byte MOTOR_STATUS_RUNNING = 1;
 constexpr byte MOTOR_STATUS_OBSTACLE = 2;
@@ -45,6 +48,7 @@ constexpr byte MOTOR_STATUS_WATCHDOG_TIMEOUT = 4;
 constexpr byte MOTOR_STATUS_INVALID_COMMAND = 5;
 constexpr byte MOTOR_STATUS_UNEXPECTED_MARKER = 6;
 constexpr byte MOTOR_STATUS_CALIBRATION_REQUIRED = 7;
+constexpr byte MOTOR_STATUS_PROTOCOL_REQUIRED = 8;
 constexpr byte ACTUATOR_COMMAND_STOP = 0;
 constexpr byte ACTUATOR_COMMAND_HUMIDIFY = 1;
 constexpr byte ACTUATOR_COMMAND_DEHUMIDIFY = 2;
@@ -89,11 +93,12 @@ const char RFID_ZONE99_UID[] PROGMEM = ROBOT_ZONE99_UID;
 // 실제 모터·가습/제습 모듈을 연결하기 전의 통합 로직 시험 설정입니다.
 // false이면 목표 구역에 등록된 UID가 일치할 때만 도착으로 인정합니다.
 constexpr bool RFID_PLACEHOLDER_ACCEPT_ANY_CARD = false;
-constexpr bool ENABLE_SERIAL_TEST_COMMANDS = true;
-// 서버/ESP가 준비되지 않은 상태에서 실제 RFID→STOP→가습 릴레이 경로를
-// 시험하기 위한 USB 전용 one-shot 명령이다. 'z'로 시작하고 'x'로 즉시
-// 중단한다. 활성 중에는 네트워크 재접속이 로컬 임무를 끊지 않게 한다.
-constexpr bool ENABLE_USB_ZONE2_MISSION_TEST = true;
+// 운영 빌드에서는 USB 문자 명령을 제거해 우발 주행을 막고 프로토콜
+// handshake·후진 안전 로직에 필요한 플래시 여유를 확보한다.
+constexpr bool ENABLE_SERIAL_TEST_COMMANDS = false;
+// 이전 2모터 벤치 시험용 z one-shot은 운영 빌드에서 끈다. 필요할 때만 true로
+// 바꾸며, 일반 운전은 서버 명령과 실제 RFID 경로를 사용한다.
+constexpr bool ENABLE_USB_ZONE2_MISSION_TEST = false;
 // Uno 플래시 여유를 확보하기 위해 긴 AT/HTTP 원문 덤프는 기본 OFF다.
 // 오류, 명령, RFID, I2C, 임무 상태 로그는 이 설정과 무관하게 계속 출력한다.
 #define VERBOSE_NETWORK_LOGS 0
@@ -112,10 +117,9 @@ constexpr unsigned long RETURN_SAFETY_TIMEOUT_MS = 30000;
 constexpr unsigned long MODULE_TIMEOUT_MS = 60000;
 constexpr unsigned long I2C_APPLY_TIMEOUT_MS = 750;
 constexpr unsigned long MOTOR_KEEPALIVE_MS = 400;
-// 현재 데모에서는 초음파를 관측/로그에만 사용한다. false이면 15cm 출발
-// 차단과 주행 중 PAUSE는 적용하지 않으며, true로 바꾸면 기존 안전 로직이
-// 그대로 다시 활성화된다.
-constexpr bool ULTRASONIC_SAFETY_ENABLED = false;
+// HC-SR04는 새 N20 후륜 쪽(차량 뒤)을 바라본다. 전진에서는 진단만 하고,
+// 후진은 최신 sample이 있을 때만 시작한다. NO_ECHO/OUT_OF_RANGE는 넓은
+// 공간일 수 있어 허용하지만 STUCK_HIGH와 유효한 근거리 값은 정지시킨다.
 
 SoftwareSerial esp8266(UNO_ESP_RX_PIN, UNO_ESP_TX_PIN);
 SoftwareMFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN, RFID_SCK_PIN,
@@ -155,8 +159,9 @@ enum StopRetryMode : byte {
   STOP_RETRY_KEEP_FAULT
 };
 
-// 직선 트랙의 물리적 순서다. MotorUno는 단순히 현재 방향으로 계속 가거나
-// 180도 회전할 뿐이고, 어느 역을 통과/정차할지는 SensorUno가 관리한다.
+// 직선 트랙의 물리적 순서다. 새 4륜 차체는 제자리 회전하지 않는다.
+// OUTBOUND는 차체 앞쪽으로 전진, HOMEBOUND는 같은 자세로 뒤쪽 후진이며,
+// 어느 역을 통과/정차할지는 SensorUno가 관리한다.
 enum RouteStation : int8_t {
   STATION_UNKNOWN = -1,
   STATION_HOME = 0,
@@ -206,7 +211,12 @@ constexpr unsigned long WIFI_RECONNECT_INTERVAL_MS = 15000;
 // 주행 중 태그를 지나치지 않도록 RC522를 짧은 간격으로 확인한다. 같은
 // 태그가 리더 아래에 남아 있어도 두 번 역으로 처리하지 않도록 별도 보호한다.
 constexpr unsigned long RFID_SCAN_INTERVAL_MS = 40;
-constexpr unsigned long RFID_TURN_GUARD_MS = 850;
+// 전진/후진을 바꾼 직후에는 방금 지나온 카드가 RC522 아래에 남아 있을 수
+// 있다. 짧은 기계 안정 시간과 최소 한 번의 no-card 관측 뒤에만 새 도착을
+// 허용한다. 이는 회전 시간이 아니라 태그 이탈 확인용 가드다.
+// 1:298 N20 저속 후륜이 판독 영역을 빠져나갈 시간을 고려한 초기 안전값이다.
+// 실차 속도를 측정한 뒤 줄일 수 있지만 no-card 조건 자체는 유지한다.
+constexpr unsigned long RFID_DIRECTION_SETTLE_MS = 850;
 constexpr unsigned long RFID_LOG_INTERVAL_MS = 5000;
 constexpr unsigned long MODULE_STATUS_POLL_MS = 100;
 unsigned long lastModuleStatusPollAt = 0;
@@ -234,7 +244,6 @@ constexpr unsigned int OBSTACLE_STOP_CM = 15;
 constexpr unsigned int OBSTACLE_CLEAR_CM = 18;
 constexpr unsigned long ULTRASONIC_TIMEOUT_US = 25000UL;
 constexpr unsigned long ULTRASONIC_FRESHNESS_MS = 1000;
-constexpr byte ULTRASONIC_FAILURE_LIMIT = 3;
 constexpr byte ULTRASONIC_VALID_STREAK_REQUIRED = 3;
 
 // pulseIn()의 0 반환값만으로는 ECHO가 끝까지 LOW였는지, HIGH에 고정됐는지
@@ -255,13 +264,11 @@ float sensorHumidity = NAN;
 bool dhtReadOk = false;
 long obstacleDistanceCm = -1;
 bool obstaclePauseActive = false;
-// 한 번의 우연한 정상값이 여러 무응답을 모두 지우지 않게 점수를 사용한다.
-// 실패는 +1, 정상값은 -1이며 출발에는 정상값 3회 연속이 필요하다.
-byte ultrasonicFailureScore = 0;
 byte consecutiveUltrasonicValidSamples = 0;
 UltrasonicSampleStatus lastUltrasonicSample = ULTRASONIC_SAMPLE_UNKNOWN;
 unsigned int lastUltrasonicPulseUs = 0;
 unsigned long lastValidUltrasonicAt = 0;
+unsigned long lastUltrasonicSampleAt = 0;
 // D2(INT0) 인터럽트에서는 시간과 상태만 기록한다. Serial/I2C/모터 제어는
 // 절대 ISR에서 실행하지 않고 loop()의 updateObstacleSensor()가 처리한다.
 enum UltrasonicCaptureState : byte {
@@ -291,8 +298,9 @@ constexpr unsigned long HEARTBEAT_INTERVAL_MS = 9000;
 const char HEARTBEAT_EVENT[] = "HEARTBEAT";
 unsigned long lastRfidScanAt = 0;
 RouteStation lastAcceptedRfidStation = STATION_UNKNOWN;
-unsigned long rfidTurnGuardStartedAt = 0;
-bool rfidTurnGuardActive = false;
+unsigned long rfidDirectionGuardStartedAt = 0;
+bool rfidDirectionGuardActive = false;
+bool rfidDirectionClearSeen = false;
 
 // Arduino 자동 프로토타입 생성기가 기본 인자를 안정적으로 처리하지 못하는
 // 경우가 있어, 경로 함수보다 뒤에 정의된 모듈 시작 함수를 명시한다.
@@ -638,6 +646,10 @@ bool waitForMotorCommand(byte command, byte sequence) {
       continue;
     }
 
+    if (command == MOTOR_COMMAND_PROTOCOL_SYNC) {
+      return status == MOTOR_STATUS_PROTOCOL_REQUIRED;
+    }
+
     if (status == MOTOR_STATUS_WATCHDOG_TIMEOUT ||
         status == MOTOR_STATUS_INVALID_COMMAND ||
         status == MOTOR_STATUS_UNEXPECTED_MARKER) return false;
@@ -646,8 +658,10 @@ bool waitForMotorCommand(byte command, byte sequence) {
     // STATUS_IDLE을 받아야 성공이며, 나머지 이동 명령의 status 7은 거절이다.
     if (command == MOTOR_COMMAND_STOP) {
       return status == MOTOR_STATUS_IDLE ||
-             status == MOTOR_STATUS_CALIBRATION_REQUIRED;
+             status == MOTOR_STATUS_CALIBRATION_REQUIRED ||
+             status == MOTOR_STATUS_PROTOCOL_REQUIRED;
     }
+    if (status == MOTOR_STATUS_PROTOCOL_REQUIRED) return false;
     if (command == MOTOR_COMMAND_HOME_SYNC) {
       return status == MOTOR_STATUS_IDLE;
     }
@@ -678,6 +692,8 @@ void latchRouteUnknown() {
   confirmedStation = STATION_UNKNOWN;
   expectedStation = STATION_UNKNOWN;
   routeAtStation = false;
+  rfidDirectionGuardActive = false;
+  rfidDirectionClearSeen = false;
 }
 
 // 모든 raw STOP 호출이 ACK 실패를 놓치지 않도록 두 STOP 함수에서 사용하는
@@ -685,25 +701,23 @@ void latchRouteUnknown() {
 void armStopRetry(StopRetryMode mode, bool motorStopped, bool moduleStopped);
 
 bool stopMotorController() {
-  const bool turnPositionUncertain = rfidTurnGuardActive &&
-      (obstaclePauseActive ||
-       millis() - rfidTurnGuardStartedAt < RFID_TURN_GUARD_MS);
   const bool stopped = sendMotorCommandChecked(MOTOR_COMMAND_STOP);
   obstaclePauseActive = false;
-  rfidTurnGuardActive = false;
-  if (turnPositionUncertain) latchRouteUnknown();
   Serial.println(stopped ? F("[I2C MOTOR] STOP confirmed")
                          : F("[I2C MOTOR] STOP failed/no ACK"));
   if (!stopped) armStopRetry(STOP_RETRY_KEEP_FAULT, false, true);
   return stopped;
 }
 
-bool startMotorController(bool returning) {
+bool startMotorController(RouteHeading heading) {
   obstaclePauseActive = false;
-  const byte command = returning ? MOTOR_COMMAND_RETURN : MOTOR_COMMAND_OUTBOUND;
+  // command 1은 차체 앞쪽 전진, command 2는 네 바퀴 모두 반대로 돌리는
+  // 실제 후진이다. 이전처럼 180도 회전 명령으로 사용하지 않는다.
+  const bool reversing = heading == HEADING_HOMEBOUND;
+  const byte command = reversing ? MOTOR_COMMAND_RETURN : MOTOR_COMMAND_OUTBOUND;
   const bool started = sendMotorCommandChecked(command);
   Serial.print(F("[I2C MOTOR] command="));
-  Serial.print(returning ? F("RETURN") : F("OUTBOUND"));
+  Serial.print(reversing ? F("REVERSE_HOMEBOUND") : F("FORWARD_OUTBOUND"));
   Serial.println(started ? F(" confirmed") : F(" failed/no ACK"));
   return started;
 }
@@ -728,8 +742,8 @@ bool targetAheadOnCurrentSegment(RouteStation destination) {
 }
 
 // 목적지까지 이동을 시작하거나, 이미 같은 방향으로 주행 중이면 현재 주행을
-// 유지한다. MOTOR_COMMAND_RETURN(2)는 이름과 달리 여기서는 "180도 회전 후
-// 진행"으로 사용하고, OUTBOUND(1)는 "현재 방향으로 진행"으로 사용한다.
+// 유지한다. 차체는 회전하지 않는다. 목적지가 큰 역 번호 쪽이면 실제 전진,
+// 작은 역 번호 쪽이면 네 바퀴를 반대로 돌려 실제 후진한다.
 bool startRouteTravel(RouteStation destination) {
   if (!validRouteStation(destination) || !validRouteStation(confirmedStation)) {
     stopMotorController();
@@ -744,7 +758,6 @@ bool startRouteTravel(RouteStation destination) {
 
   const bool movingNow =
       robotPhase == PHASE_MOVING || robotPhase == PHASE_RETURNING;
-  bool turnAround = false;
   RouteHeading nextHeading = routeHeading;
   RouteStation nextExpected = expectedStation;
 
@@ -752,7 +765,6 @@ bool startRouteTravel(RouteStation destination) {
     if (destination == confirmedStation) return true;
     const RouteHeading desired = destination > confirmedStation
         ? HEADING_OUTBOUND : HEADING_HOMEBOUND;
-    turnAround = desired != routeHeading;
     nextHeading = desired;
     nextExpected = static_cast<RouteStation>(confirmedStation + nextHeading);
   } else if (targetAheadOnCurrentSegment(destination)) {
@@ -768,12 +780,12 @@ bool startRouteTravel(RouteStation destination) {
         ? HEADING_HOMEBOUND : HEADING_OUTBOUND;
     // 구간 중간에서 되돌아가면 다음 역은 방금 떠난 confirmedStation이다.
     nextExpected = confirmedStation;
-    turnAround = true;
   }
 
-  if (!startMotorController(turnAround)) {
+  const bool directionChanged = nextHeading != routeHeading;
+  if (!startMotorController(nextHeading)) {
     // START 프레임만 적용되고 ACK가 유실됐을 수도 있으므로 즉시 STOP을
-    // 재전송한다. 실제 방향을 확신할 수 없어 경로 위치도 UNKNOWN으로 잠근다.
+    // 재전송한다. 실제 이동 여부를 확신할 수 없어 경로 위치도 UNKNOWN으로 잠근다.
     stopMotorController();
     stopModuleController();
     latchRouteUnknown();
@@ -786,9 +798,10 @@ bool startRouteTravel(RouteStation destination) {
 
   routeHeading = nextHeading;
   expectedStation = nextExpected;
-  if (turnAround) {
-    rfidTurnGuardStartedAt = millis();
-    rfidTurnGuardActive = true;
+  if (directionChanged) {
+    rfidDirectionGuardStartedAt = millis();
+    rfidDirectionGuardActive = true;
+    rfidDirectionClearSeen = false;
   }
   routeAtStation = false;
   robotPhase = destination == STATION_HOME ? PHASE_RETURNING : PHASE_MOVING;
@@ -839,14 +852,14 @@ void onUltrasonicEchoChange() {
   }
 }
 
-void startUltrasonicCapture() {
+bool startUltrasonicCapture() {
   // 정상 HC-SR04의 ECHO는 다음 TRIG 전에는 LOW여야 한다. 150ms가 지난
   // 시점에도 HIGH이면 pulseIn의 모호한 0 대신 배선/공통 GND 고장으로 분류한다.
   if (digitalRead(ULTRASONIC_ECHO_PIN) == HIGH) {
     lastUltrasonicSample = ULTRASONIC_SAMPLE_STUCK_HIGH;
     lastUltrasonicPulseUs = 0;
     ultrasonicCaptureState = ULTRASONIC_CAPTURE_IDLE;
-    return;
+    return true;
   }
 
   ultrasonicTriggerStartedUs = micros();
@@ -860,6 +873,7 @@ void startUltrasonicCapture() {
   digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+  return false;
 }
 
 UltrasonicSampleStatus classifyUltrasonicPulse(unsigned int pulseUs) {
@@ -898,52 +912,13 @@ UltrasonicSampleStatus finishUltrasonicCapture(unsigned int& pulseUs) {
              : ULTRASONIC_SAMPLE_NO_ECHO;
 }
 
-void queueLastUltrasonicFault() {
-  if (lastUltrasonicSample == ULTRASONIC_SAMPLE_STUCK_HIGH) {
-    queueRobotReport(F("ULTRASONIC_STUCK_HIGH"));
-  } else if (lastUltrasonicSample == ULTRASONIC_SAMPLE_NO_ECHO) {
-    queueRobotReport(F("ULTRASONIC_NO_ECHO"));
-  } else if (lastUltrasonicSample == ULTRASONIC_SAMPLE_OUT_OF_RANGE) {
-    queueRobotReport(F("ULTRASONIC_RANGE_ERROR"));
-  } else {
-    queueRobotReport(F("ULTRASONIC_NOT_READY"));
-  }
-}
-
-bool rejectMovementForUltrasonic(bool returning) {
-  stopMotorController();
-  robotPhase = PHASE_TASK_COMPLETE;
-  taskActive = false;
-  setCommandResult(F("FAILED"));
-  queueLastUltrasonicFault();
-  Serial.print(F("[SAFETY] "));
-  Serial.print(returning ? F("return") : F("movement"));
-  Serial.print(F(" rejected: ultrasonic score="));
-  Serial.print(ultrasonicFailureScore);
-  Serial.print(F(" valid_streak="));
-  Serial.println(consecutiveUltrasonicValidSamples);
-  return false;
-}
-
-// 출발 직전 또는 주행 중 사용할 수 있는 최근 정상 거리값이 있는지 확인한다.
-// millis() 뺄셈 방식이라 약 49일마다 발생하는 unsigned wrap에도 안전하다.
-bool ultrasonicReadyForMovement() {
-  return !ULTRASONIC_SAFETY_ENABLED ||
-         (millis() - lastValidUltrasonicAt <= ULTRASONIC_FRESHNESS_MS &&
-         ultrasonicFailureScore == 0 &&
-         consecutiveUltrasonicValidSamples >=
-             ULTRASONIC_VALID_STREAK_REQUIRED);
-}
-
 void updateObstacleSensor() {
   // 시작 전 ECHO HIGH는 startUltrasonicCapture()가 즉시 분류한다.
   // 정상 시작 뒤에는 edge 완료/25ms 타임아웃까지만 기다리며 loop는 막지 않는다.
   if (ultrasonicCaptureState == ULTRASONIC_CAPTURE_IDLE) {
     if (millis() - lastUltrasonicAt < ULTRASONIC_INTERVAL_MS) return;
     lastUltrasonicAt = millis();
-    lastUltrasonicSample = ULTRASONIC_SAMPLE_UNKNOWN;
-    startUltrasonicCapture();
-    if (lastUltrasonicSample == ULTRASONIC_SAMPLE_UNKNOWN) return;
+    if (!startUltrasonicCapture()) return;
   } else {
     unsigned int pulseUs = 0;
     const UltrasonicSampleStatus finished = finishUltrasonicCapture(pulseUs);
@@ -951,6 +926,7 @@ void updateObstacleSensor() {
     lastUltrasonicSample = finished;
     lastUltrasonicPulseUs = pulseUs;
   }
+  lastUltrasonicSampleAt = millis();
 
   long measuredDistanceCm = -1;
   const bool validDistance =
@@ -966,15 +942,10 @@ void updateObstacleSensor() {
     if (consecutiveUltrasonicValidSamples < 255) {
       ++consecutiveUltrasonicValidSamples;
     }
-    // 여러 실패 뒤 우연히 들어온 정상값 하나가 즉시 건강 상태로 만들지 않는다.
-    if (ultrasonicFailureScore > 0) --ultrasonicFailureScore;
     lastValidUltrasonicAt = millis();
   } else {
     obstacleDistanceCm = -1;
     consecutiveUltrasonicValidSamples = 0;
-    if (ultrasonicFailureScore < ULTRASONIC_FAILURE_LIMIT) {
-      ++ultrasonicFailureScore;
-    }
   }
 
 #if VERBOSE_OPERATION_LOGS
@@ -994,68 +965,55 @@ void updateObstacleSensor() {
       Serial.print(F("OUT_OF_RANGE pulse_us="));
       Serial.print(lastUltrasonicPulseUs);
     }
-    Serial.print(F(" failure_score="));
-    Serial.print(ultrasonicFailureScore);
     Serial.print(F(" valid_streak="));
     Serial.println(consecutiveUltrasonicValidSamples);
   }
 #endif
 
-  // 측정과 로그는 유지하되 현재 데모 설정에서는 모터 제어에 관여하지 않는다.
-  if (!ULTRASONIC_SAFETY_ENABLED) {
-    obstaclePauseActive = false;
-    return;
-  }
-
   const bool robotIsMoving =
       robotPhase == PHASE_MOVING || robotPhase == PHASE_RETURNING;
-  if (!robotIsMoving) {
-    obstaclePauseActive = false;
-    return;
-  }
+  const bool reverseCommandApplied =
+      acknowledgedMotorCommand == MOTOR_COMMAND_RETURN ||
+      acknowledgedMotorCommand == MOTOR_COMMAND_PAUSE ||
+      acknowledgedMotorCommand == MOTOR_COMMAND_RESUME;
+  const bool robotIsReversing =
+      robotIsMoving && routeHeading == HEADING_HOMEBOUND &&
+      reverseCommandApplied &&
+      (lastMotorStatus == MOTOR_STATUS_RUNNING ||
+       lastMotorStatus == MOTOR_STATUS_OBSTACLE);
 
-  // ECHO가 측정 시작 전부터 HIGH면 공통 GND/배선/모듈 고장 가능성이 커서
-  // 즉시 정지한다. NO_ECHO/범위 오류는 건강 점수 3에서 안전 정지하며,
-  // 중간의 우연한 정상값 하나는 점수를 1만 낮춰 반복 오류를 숨기지 못한다.
-  if (lastUltrasonicSample == ULTRASONIC_SAMPLE_STUCK_HIGH ||
-      ultrasonicFailureScore >= ULTRASONIC_FAILURE_LIMIT) {
-    stopMotorController();
-    stopModuleController();
-    taskActive = false;
-    robotPhase = PHASE_TASK_COMPLETE;
-    setCommandResult(F("FAILED"));
-    queueLastUltrasonicFault();
-    phaseStartedAt = millis();
-    Serial.println(F("[SAFETY] ultrasonic signal fault -> all outputs stopped"));
-    return;
-  }
+  // 센서가 차체 뒤를 보기 때문에 전진 중에는 거리 측정/진단만 유지한다.
+  // STOP/RFID 정차 중에는 PAUSE를 보내지 않는다. 실제 후진 ACK 뒤에는
+  // 유효한 근거리 또는 STUCK_HIGH를 fail-safe PAUSE로 처리한다.
+  if (!robotIsReversing) return;
 
   const bool obstacleNear =
       validDistance && obstacleDistanceCm < OBSTACLE_STOP_CM;
+  const bool reversePauseRequired =
+      obstacleNear || lastUltrasonicSample == ULTRASONIC_SAMPLE_STUCK_HIGH;
   const bool pathClear =
       validDistance && obstacleDistanceCm >= OBSTACLE_CLEAR_CM &&
-      ultrasonicFailureScore == 0 &&
       consecutiveUltrasonicValidSamples >= ULTRASONIC_VALID_STREAK_REQUIRED;
 
   // 장애물이 계속 보이는 동안 clear용 정상 연속 횟수를 쌓지 않는다.
   // 장애물이 사라진 뒤 정상 거리 3회가 확인돼야 RESUME한다.
-  if (obstacleNear ||
+  if (reversePauseRequired ||
       (obstaclePauseActive && validDistance &&
        obstacleDistanceCm < OBSTACLE_CLEAR_CM)) {
     consecutiveUltrasonicValidSamples = 0;
   }
 
-  if (obstacleNear && !obstaclePauseActive) {
+  if (reversePauseRequired && !obstaclePauseActive) {
     if (sendMotorCommandChecked(MOTOR_COMMAND_PAUSE)) {
       obstaclePauseActive = true;
-      Serial.println(F("[SAFETY] obstacle detected -> MotorUno PAUSE"));
+      Serial.println(F("[REAR SAFETY] reverse PAUSE"));
     } else {
       motorLinkFaultPending = true;
     }
   } else if (pathClear && obstaclePauseActive) {
     if (sendMotorCommandChecked(MOTOR_COMMAND_RESUME)) {
       obstaclePauseActive = false;
-      Serial.println(F("[SAFETY] path clear -> MotorUno RESUME"));
+      Serial.println(F("[REAR SAFETY] clear >=18cm x3 -> reverse RESUME"));
     } else {
       motorLinkFaultPending = true;
     }
@@ -1089,7 +1047,8 @@ void serviceMotorLink() {
       status == MOTOR_STATUS_WATCHDOG_TIMEOUT ||
       status == MOTOR_STATUS_INVALID_COMMAND ||
       status == MOTOR_STATUS_UNEXPECTED_MARKER ||
-      status == MOTOR_STATUS_CALIBRATION_REQUIRED) {
+      status == MOTOR_STATUS_CALIBRATION_REQUIRED ||
+      status == MOTOR_STATUS_PROTOCOL_REQUIRED) {
     motorLinkFaultPending = true;
   }
 }
@@ -1105,7 +1064,8 @@ void applyMotorLinkState() {
     taskActive = false;
     robotPhase = PHASE_TASK_COMPLETE;
     setCommandResult(F("FAILED"));
-    if (faultStatus == MOTOR_STATUS_CALIBRATION_REQUIRED) {
+    if (faultStatus == MOTOR_STATUS_CALIBRATION_REQUIRED ||
+        faultStatus == MOTOR_STATUS_PROTOCOL_REQUIRED) {
       queueRobotReport(F("CALIBRATION_REQUIRED"));
       Serial.println(F("[I2C MOTOR] HOME calibration lost -> safe stop"));
     } else if (faultStatus == MOTOR_STATUS_UNEXPECTED_MARKER) {
@@ -1169,8 +1129,8 @@ void stopSafelyForServerLoss() {
   if (robotPhase == PHASE_IDLE || robotPhase == PHASE_TASK_COMPLETE) return;
   const bool motorStopped = stopMotorController();
   const bool moduleStopped = stopModuleController();
-  // 회전 도중 정지된 경우 stopMotorController()가 경로를 UNKNOWN으로
-  // 잠근다. 위치와 다음 역이 모두 유효할 때만 같은 서버 명령을 1회 재개한다.
+  // Motor STOP ACK가 확인되고 위치와 다음 역이 모두 유효할 때만 같은 서버
+  // 명령을 1회 재개한다. 전진/후진 방향은 routeHeading으로 그대로 복구한다.
   retrySameRevisionAllowed = motorStopped && moduleStopped &&
                              validRouteStation(confirmedStation) &&
                              validRouteStation(expectedStation);
@@ -1295,9 +1255,13 @@ bool performHomeCalibration() {
   // 보정 명령이 주행 중 들어와도 Actuator ACK를 기다리는 동안 차가 더 가지
   // 않도록 Motor STOP을 가장 먼저 확인한다. 두 출력 보드가 모두 정지한 뒤에만
   // HOME 마커를 읽는 stationary HOME_SYNC를 보낸다.
+  // versioned 이동 명령 의미가 같은 4모터 v2인지 먼저 확인한다. 구형 MotorUno는
+  // command 7을 invalid로 정지하므로 혼합 펌웨어로는 보정이 열리지 않는다.
+  const bool protocolReady =
+      sendMotorCommandChecked(MOTOR_COMMAND_PROTOCOL_SYNC);
   const bool motorStopped = stopMotorController();
   const bool moduleStopped = stopModuleController();
-  const bool homeSynced = motorStopped && moduleStopped &&
+  const bool homeSynced = protocolReady && motorStopped && moduleStopped &&
       sendMotorCommandChecked(MOTOR_COMMAND_HOME_SYNC);
   if (!homeSynced) {
     stopMotorController();
@@ -1316,7 +1280,8 @@ bool performHomeCalibration() {
   routeHeading = HEADING_OUTBOUND;
   routeAtStation = true;
   lastAcceptedRfidStation = STATION_UNKNOWN;
-  rfidTurnGuardActive = false;
+  rfidDirectionGuardActive = false;
+  rfidDirectionClearSeen = false;
   obstaclePauseActive = false;
   robotPhase = PHASE_IDLE;
   phaseStartedAt = millis();
@@ -1361,12 +1326,8 @@ bool startPlaceholderMovement() {
     return false;
   }
 
-  // 부팅 후 최소 한 번은 정상 거리값을 확인해야 하며 오래됐거나 연속
-  // 무응답인 값으로는 원격 TASK가 와도 모터를 시작하지 않는다.
+  // 후방 초음파는 전진 출동을 차단하지 않고 측정/진단만 계속한다.
   updateObstacleSensor();
-  if (!ultrasonicReadyForMovement()) {
-    return rejectMovementForUltrasonic(false);
-  }
   return startRouteTravel(targetStation);
 }
 
@@ -1406,9 +1367,24 @@ bool startPlaceholderReturn() {
     return false;
   }
 
+  // 정차 중 샘플 갱신은 모터 PAUSE를 보내지 않는다. 최신 완료 sample이 없거나
+  // STUCK_HIGH/근거리이면 후진을 시작하지 않는다. NO_ECHO와 OUT_OF_RANGE는
+  // 넓은 공간일 수 있으므로 진단을 남기고 출발을 허용한다.
   updateObstacleSensor();
-  if (!ultrasonicReadyForMovement()) {
-    return rejectMovementForUltrasonic(true);
+  const bool rearSampleFresh =
+      lastUltrasonicSample != ULTRASONIC_SAMPLE_UNKNOWN &&
+      millis() - lastUltrasonicSampleAt <= ULTRASONIC_FRESHNESS_MS;
+  const bool rearStartBlocked =
+      !rearSampleFresh ||
+      lastUltrasonicSample == ULTRASONIC_SAMPLE_STUCK_HIGH ||
+      (lastUltrasonicSample == ULTRASONIC_SAMPLE_VALID &&
+       obstacleDistanceCm < OBSTACLE_STOP_CM);
+  if (rearStartBlocked) {
+    stopMotorController();
+    robotPhase = PHASE_TASK_COMPLETE;
+    setCommandResult(F("FAILED"));
+    queueRobotReport(F("REVERSE_START_BLOCKED"));
+    return false;
   }
   return startRouteTravel(STATION_HOME);
 }
@@ -2170,16 +2146,14 @@ bool pollServerCommand() {
       // 재사용하지 않도록 출발 전에 경로를 UNKNOWN으로 잠근다.
       latchRouteUnknown();
       updateObstacleSensor();
-      const bool sensorReady = ultrasonicReadyForMovement();
-      const bool motorStarted = moduleStopped && sensorReady &&
-                                startMotorController(false);
+      // 후방 HC-SR04는 앞쪽 수동 전진을 제어하지 않는다.
+      const bool motorStarted = moduleStopped &&
+          startMotorController(HEADING_OUTBOUND);
       if (motorStarted) {
+        routeHeading = HEADING_OUTBOUND;
         robotPhase = PHASE_MOVING;
         phaseStartedAt = millis();
         queueRobotReport(F("MANUAL_MOTOR_FWD"));
-      } else if (moduleStopped && !sensorReady) {
-        manualForwardActive = false;
-        rejectMovementForUltrasonic(false);
       } else {
         manualForwardActive = false;
         stopMotorController();
@@ -2329,13 +2303,14 @@ void processRouteRfid(RouteStation scannedStation) {
   if (!routeMoving || manualForwardActive ||
       scannedStation == STATION_UNKNOWN) return;
 
-  // 웹/USB의 합성 RFID_TEST도 이 중앙 함수를 통과한다. 180도 회전 중
-  // 도착을 확정하면 차체 방향이 불명인 상태를 정상 위치로 덮어쓸 수 있으므로
-  // 실제 카드와 같은 회전 보호 조건을 적용한다.
-  if (rfidTurnGuardActive &&
-      (obstaclePauseActive ||
-       millis() - rfidTurnGuardStartedAt < RFID_TURN_GUARD_MS)) return;
-  rfidTurnGuardActive = false;
+  // 웹/USB 합성 RFID도 실제 리더와 같은 방향변경 가드를 통과해야 한다.
+  // 차체 회전은 없지만, 직전 태그가 안테나 아래에 남은 채 후진을 시작하면
+  // 같은 UID를 새 도착으로 오인할 수 있다.
+  if (rfidDirectionGuardActive &&
+      (obstaclePauseActive || !rfidDirectionClearSeen ||
+       millis() - rfidDirectionGuardStartedAt <
+           RFID_DIRECTION_SETTLE_MS)) return;
+  rfidDirectionGuardActive = false;
 
   const unsigned long now = millis();
   // 방금 태그 위에서 미끄러지거나 오래 정체되어도 같은 역을 다시 오류로
@@ -2386,24 +2361,31 @@ void checkRfidArrival() {
   // IDLE/모듈 실행 중에는 최대 36ms 걸리는 RC522 transceive를 실행하지 않아
   // ESP-01 SoftwareSerial 수신과 actuator 상태 확인을 방해하지 않는다.
   if (!routeMoving || manualForwardActive) return;
-  if (rfidTurnGuardActive) {
-    // 회전 중 장애물 PAUSE가 걸리면 MotorUno도 남은 회전 시간을 보존한다.
-    // RESUME 뒤 온전한 회전 시간이 다시 확보되도록 가드 기준을 계속 늦춘다.
-    if (obstaclePauseActive) {
-      rfidTurnGuardStartedAt = millis();
-      return;
-    }
-    if (millis() - rfidTurnGuardStartedAt < RFID_TURN_GUARD_MS) return;
-    rfidTurnGuardActive = false;
+  if (rfidDirectionGuardActive && obstaclePauseActive) {
+    // 장애물 때문에 실제 이동하지 못한 시간은 안정 시간으로 세지 않는다.
+    rfidDirectionGuardStartedAt = millis();
+    rfidDirectionClearSeen = false;
   }
   if (millis() - lastRfidScanAt < RFID_SCAN_INTERVAL_MS) return;
   lastRfidScanAt = millis();
 
   if (!rfid.PICC_IsNewCardPresent()) {
+    if (rfidDirectionGuardActive && !obstaclePauseActive) {
+      rfidDirectionClearSeen = true;
+    }
     if (millis() - lastRfidLogAt >= RFID_LOG_INTERVAL_MS) {
       lastRfidLogAt = millis();
       Serial.println(F("[RFID] scanning... no card"));
     }
+    return;
+  }
+
+  if (rfidDirectionGuardActive &&
+      (obstaclePauseActive || !rfidDirectionClearSeen ||
+       millis() - rfidDirectionGuardStartedAt <
+           RFID_DIRECTION_SETTLE_MS)) {
+    // 태그가 계속 보이면 no-card 조건을 다시 요구한다.
+    rfidDirectionClearSeen = false;
     return;
   }
 
@@ -2429,12 +2411,13 @@ void checkRfidArrival() {
 
   // 먼저 모터를 정지시킨 뒤 로그를 출력해 고속 주행에서도 제동을 늦추지 않는다.
   processRouteRfid(scannedStation);
-  Serial.print(F("[RFID] UID="));
-  Serial.println(uidText);
-  Serial.print(F("[RFID] station="));
-  if (scannedStation == STATION_ZONE2) Serial.println(F("ZONE2"));
-  else if (scannedStation == STATION_ZONE99) Serial.println(F("ZONE99"));
-  else Serial.println(F("UNREGISTERED"));
+  if (scannedStation == STATION_ZONE2) {
+    Serial.println(F("[RFID] ARRIVAL CONFIRMED station=ZONE2"));
+  } else if (scannedStation == STATION_ZONE99) {
+    Serial.println(F("[RFID] ARRIVAL CONFIRMED station=ZONE99"));
+  } else {
+    Serial.println(F("[RFID] UNREGISTERED"));
+  }
 
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
@@ -2457,9 +2440,8 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN),
                   onUltrasonicEchoChange, CHANGE);
   Serial.println(F("[BOOT] HC-SR04 non-blocking ECHO capture on D2/INT0"));
-  Serial.println(ULTRASONIC_SAFETY_ENABLED
-      ? F("[BOOT] HC-SR04 motor safety ENABLED")
-      : F("[BOOT] HC-SR04 monitor only; motor safety BYPASSED"));
+  Serial.println(F("[BOOT] HC-SR04 rear safety: reverse PAUSE only"));
+  Serial.println(F("[BOOT] NO_ECHO=diagnostic; STUCK_HIGH=reverse stop"));
   // 전원/배선 진단: 정상 대기 중인 ESP TX와 DHT DATA는 보통 HIGH,
   // HC-SR04 ECHO는 LOW이다. ESP TX가 계속 LOW이면 ESP 전원/EN을 먼저 확인한다.
   Serial.print(F("[PIN LEVEL] ESP_TX@D6="));

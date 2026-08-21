@@ -8,7 +8,7 @@ two ESP-01 sketches at the fixed sensing zones.
 | Role | Sketch | Notes |
 | --- | --- | --- |
 | SensorUno / I²C master | `uno_robot_esp01_rfid_relay/` | Network polling, RFID, local sensors, mission coordination |
-| MotorUno / I²C `0x08` | `uno_line_tracker_motor_controller/` | Two-wheel line following and fail-safe motor control |
+| MotorUno / I²C `0x08` | `uno_line_tracker_motor_controller/` | Four-motor forward/reverse line following and fail-safe control; M1/M3 left, M2/M4 right |
 | ActuatorUno / I²C `0x09` | `uno_humidity_module_controller/` | Humidifier, dehumidifier, fan, and LCD |
 | Fixed zone 2 | `zone2_esp01_direct/` | ESP-01 + DHT sensor reporter |
 | Fixed zone 99 | `zone99_esp01_dht11/` | ESP-01 + DHT sensor reporter |
@@ -16,6 +16,11 @@ two ESP-01 sketches at the fixed sensing zones.
 Copy each checked-in `*.example.h` file to the corresponding ignored private
 header before compiling networked sketches. Never commit SSIDs, passwords,
 access tokens, or site-specific addresses.
+
+Upload SensorUno and MotorUno from the same commit. The four-motor runtime uses
+versioned movement commands `0x11/0x12` for absolute forward/straight reverse
+and requires a `PROTOCOL_SYNC(7)` exact ACK before HOME calibration. Legacy
+movement values `1/2` are invalid, so a mixed old/new pair remains stopped.
 
 ## Diagnostics
 
@@ -26,7 +31,8 @@ them.
 - `i2c_bus_diagnostic/`, `i2c_passive_release/`, `i2c_slave_diagnostic/`
 - `sensor_bus_release/`, `uno_sensor_pin_diagnostic/`
 - `uno_esp01_at_bridge/`, `uno_esp01_autobaud_diagnostic/`
-- `uno_motor_power_diagnostic/`, `uno_rc522_diagnostic/`
+- `uno_motor_power_diagnostic/` (independent M1–M4 and forward/reverse test), `uno_rc522_diagnostic/`
+- `uno_zone2_rfid_drive_diagnostic/` (SensorUno replacement for HOME sync → versioned 4WD forward → ZONE2 RFID stop; copy its example UID header first)
 - `uno_server_gateway_esp01/` (optional USB/network handoff helper)
 
 ## Legacy prototypes

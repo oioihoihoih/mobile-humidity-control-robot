@@ -12,10 +12,12 @@ constexpr byte MOTOR_ADDRESS = 0x08;
 constexpr byte ACTUATOR_ADDRESS = 0x09;
 
 constexpr byte MOTOR_STOP = 0;
-constexpr byte MOTOR_OUTBOUND = 1;
-constexpr byte MOTOR_TURN_AROUND = 2;
+constexpr byte MOTOR_OUTBOUND = 0x11;
+// 운영 MotorUno와 같이 v2 0x12는 네 바퀴 직선 후진이다.
+constexpr byte MOTOR_REVERSE_HOME = 0x12;
 constexpr byte MOTOR_KEEPALIVE = 5;
 constexpr byte MOTOR_HOME_SYNC = 6;
+constexpr byte MOTOR_PROTOCOL_SYNC = 7;
 
 constexpr byte MOTOR_IDLE = 0;
 constexpr byte MOTOR_RUNNING = 1;
@@ -23,6 +25,7 @@ constexpr byte MOTOR_OBSTACLE = 2;
 constexpr byte MOTOR_WATCHDOG_TIMEOUT = 4;
 constexpr byte MOTOR_INVALID_COMMAND = 5;
 constexpr byte MOTOR_CALIBRATION_REQUIRED = 7;
+constexpr byte MOTOR_PROTOCOL_REQUIRED = 8;
 
 // MotorUno의 논리 3바이트 상태 응답을 SimulIDE에서 1바이트씩 읽기 위한
 // 전용 selector다. 운영 프레임의 status/command/sequence 의미는 같다.
@@ -333,14 +336,15 @@ bool sendMotor(byte command) {
   if (error != 0) return false;
 
   // KEEPALIVE는 MotorUno의 applied command/sequence를 바꾸지 않는다.
-  // 대신 상태 7을 읽어 MotorUno 단독 재부팅도 즉시 interlock으로 되돌린다.
+  // 상태 7/8을 읽어 MotorUno 단독 재부팅도 즉시 interlock으로 되돌린다.
   if (command == MOTOR_KEEPALIVE) {
     delay(3);
     byte status;
     byte appliedCommand;
     byte appliedSequence;
     if (!readMotorState(status, appliedCommand, appliedSequence)) return false;
-    if (status == MOTOR_CALIBRATION_REQUIRED) {
+    if (status == MOTOR_CALIBRATION_REQUIRED ||
+        status == MOTOR_PROTOCOL_REQUIRED) {
       routeCalibrated = false;
       return false;
     }
@@ -360,9 +364,12 @@ bool sendMotor(byte command) {
     }
 
     bool accepted = false;
-    if (command == MOTOR_STOP) {
+    if (command == MOTOR_PROTOCOL_SYNC) {
+      accepted = status == MOTOR_PROTOCOL_REQUIRED;
+    } else if (command == MOTOR_STOP) {
       accepted = status == MOTOR_IDLE ||
-                 status == MOTOR_CALIBRATION_REQUIRED;
+                 status == MOTOR_CALIBRATION_REQUIRED ||
+                 status == MOTOR_PROTOCOL_REQUIRED;
     } else if (command == MOTOR_HOME_SYNC) {
       accepted = status == MOTOR_IDLE;
     } else {
@@ -372,7 +379,8 @@ bool sendMotor(byte command) {
       lastMotorCommand = command;
       return true;
     }
-    if (status == MOTOR_CALIBRATION_REQUIRED) routeCalibrated = false;
+    if (status == MOTOR_CALIBRATION_REQUIRED ||
+        status == MOTOR_PROTOCOL_REQUIRED) routeCalibrated = false;
     return false;
   }
   return false;
@@ -447,8 +455,11 @@ bool performHomeCalibration() {
   mode = SAFE_STOP;
   targetStation = HOME;
   targetAction = ACTION_NONE;
+  const bool protocolReady = sendMotor(MOTOR_PROTOCOL_SYNC);
+  const bool motorStopped = sendMotor(MOTOR_STOP);
   const bool actuatorStopped = sendActuator(ACTUATOR_STOP);
-  const bool homeSynced = actuatorStopped && sendMotor(MOTOR_HOME_SYNC);
+  const bool homeSynced = protocolReady && motorStopped && actuatorStopped &&
+      sendMotor(MOTOR_HOME_SYNC);
   if (!homeSynced) {
     sendMotor(MOTOR_STOP);
     Serial.println(F("[CALIBRATION] FAILED: release D9/D10 so both are HIGH"));
@@ -512,12 +523,12 @@ void startReturnHome() {
   sendActuator(ACTUATOR_STOP);
   targetStation = HOME;
   targetAction = ACTION_NONE;
-  if (!sendMotor(MOTOR_TURN_AROUND)) {
+  if (!sendMotor(MOTOR_REVERSE_HOME)) {
     stopEverything(F("return command failed"));
     return;
   }
   mode = RETURNING_HOME;
-  Serial.println(F("[SERVER PROXY] RETURN_HOME -> turn around"));
+  Serial.println(F("[SERVER PROXY] RETURN_HOME -> straight reverse"));
 }
 
 void arriveAt(Station station) {
@@ -554,14 +565,18 @@ void arriveAt(Station station) {
 
   if (mode == RETURNING_HOME) {
     if (station != ZONE2 || currentStation != ZONE99) {
-      stopEverything(F("unexpected return station order"));
+      stopEverything(F("unexpected reverse-home station order"));
       return;
     }
     sendMotor(MOTOR_STOP);
     currentStation = ZONE2;
-    // TURN_AROUND 뒤의 물리 방향을 유지한 채 계속 가는 명령이다.
-    sendMotor(MOTOR_OUTBOUND);
-    Serial.println(F("[ROUTE] return passed ZONE2 -> continue HOME"));
+    // RFID 확인용 STOP 뒤에도 차체 방향을 바꾸지 않는다. 복귀 명령 2를
+    // 다시 보내 네 바퀴가 같은 직선 후진 방향으로 HOME까지 계속 간다.
+    if (!sendMotor(MOTOR_REVERSE_HOME)) {
+      stopEverything(F("reverse-home resume failed at ZONE2"));
+      return;
+    }
+    Serial.println(F("[ROUTE] return passed ZONE2 -> keep reversing HOME"));
   }
 }
 
@@ -572,7 +587,7 @@ void arriveHomeMarker() {
     return;
   }
   if (mode != RETURNING_HOME || currentStation != ZONE2) {
-    stopEverything(F("HOME marker before return ZONE2"));
+    stopEverything(F("HOME marker before reverse passed ZONE2"));
     return;
   }
   sendMotor(MOTOR_STOP);
@@ -784,6 +799,7 @@ void setup() {
 
   Serial.println(F("SensorUno 3-Uno proxy ready"));
   Serial.println(F("Route: HOME -> ZONE2 -> ZONE99"));
+  Serial.println(F("Motor: command 1=FORWARD, 2=straight REVERSE_HOME; no U-turn"));
   Serial.println(F("I2C: Motor=0x08 Actuator=0x09, A5 control + D1 display"));
   Serial.println(F("CALIBRATION REQUIRED: HOME marker + h/D13; motor stays OFF"));
   Serial.println(F("Serial: h=CALIBRATE/HOME, 2/3=Z2 H/D, 9/0=Z99 H/D, z/x=RFID, r=RETURN, a=STOP"));

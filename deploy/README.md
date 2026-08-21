@@ -32,3 +32,11 @@ SimulIDE 쪽은 [`../simulide/firmware/build-manifest.json`](../simulide/firmwar
 기록된 각 Uno 소스와 HEX의 SHA-256을
 `python simulide\validate_sim2.py`로 확인합니다. 자세한 의미와 제한은
 [`../simulide/README.md`](../simulide/README.md)를 참고합니다.
+
+## 4모터 전·후진 인계 메모
+
+Git에서 재현 가능한 변경 범위와 현장 시험 순서는
+[`HANDOFF_4WD_REVERSE_2026-08-21.md`](HANDOFF_4WD_REVERSE_2026-08-21.md)에
+기록합니다. 로컬에서 만든 ZIP과 `.sha256`은 저장소에 커밋하지 않으며, 실제
+전달이 필요할 때만 같은 릴리스 저장소에 한 쌍으로 게시합니다. clean clone에
+없는 로컬 압축 파일을 문서의 필수 입력으로 간주하지 않습니다.

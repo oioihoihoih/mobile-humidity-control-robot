@@ -4,7 +4,7 @@
 <mainCompProps MainCompId="mega328-109" Package="1- mega328_DIP" Frequency="16 MHz" ForceFreq="true" savePGM="false" Program="firmware/sensor_uno_3uno_proxy/sensor_uno_3uno_proxy.ino.hex" Auto_Load="false" saveEepr="true" MainMcu="false" SerialMon="-1" />
 </item>
 
-<item itemtype="Subcircuit" CircId="Uno-2" mainComp="false" Show_id="true" Show_Val="false" Pos="100,-360" rotation="0" hflip="1" vflip="1" label="MotorUno: I2C slave 0x08 / line proxy" idLabPos="-110,-30" labelrot="0" valLabPos="-16,20" valLabRot="0" Package="1- Board">
+<item itemtype="Subcircuit" CircId="Uno-2" mainComp="false" Show_id="true" Show_Val="false" Pos="100,-360" rotation="0" hflip="1" vflip="1" label="MotorUno: 0x08 / 4WD straight forward-reverse proxy" idLabPos="-145,-30" labelrot="0" valLabPos="-16,20" valLabRot="0" Package="1- Board">
 <mainCompProps MainCompId="mega328-109" Package="1- mega328_DIP" Frequency="16 MHz" ForceFreq="true" savePGM="false" Program="firmware/motor_uno_i2c_proxy/motor_uno_i2c_proxy.ino.hex" Auto_Load="false" saveEepr="true" MainMcu="false" SerialMon="-1" />
 </item>
 
@@ -64,13 +64,21 @@
 
 <item itemtype="Ground" CircId="Ground-Line-R" mainComp="false" Show_id="false" Show_Val="false" Pos="480,-550" rotation="0" hflip="1" vflip="1" label="Ground-Line-R" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
 
-<item itemtype="Led" CircId="Led-Motor-LF" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-480" rotation="0" hflip="1" vflip="1" label="left motors FORWARD proxy (D3)" idLabPos="-100,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Green" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+<item itemtype="Led" CircId="Led-Motor-M1-F" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-570" rotation="0" hflip="1" vflip="1" label="M1 existing LEFT FORWARD (D2)" idLabPos="-105,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Green" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
 
-<item itemtype="Led" CircId="Led-Motor-RF" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-390" rotation="0" hflip="1" vflip="1" label="right motors FORWARD proxy (D5)" idLabPos="-105,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Green" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+<item itemtype="Led" CircId="Led-Motor-M1-R" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-510" rotation="0" hflip="1" vflip="1" label="M1 existing LEFT REVERSE (D3)" idLabPos="-105,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Orange" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
 
-<item itemtype="Led" CircId="Led-Motor-LR" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-300" rotation="0" hflip="1" vflip="1" label="left motors REVERSE proxy (D6)" idLabPos="-100,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Orange" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+<item itemtype="Led" CircId="Led-Motor-M2-F" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-450" rotation="0" hflip="1" vflip="1" label="M2 existing RIGHT FORWARD (D4)" idLabPos="-110,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Green" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
 
-<item itemtype="Led" CircId="Led-Motor-RR" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-210" rotation="0" hflip="1" vflip="1" label="right motors REVERSE proxy (D11)" idLabPos="-105,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Orange" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+<item itemtype="Led" CircId="Led-Motor-M2-R" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-390" rotation="0" hflip="1" vflip="1" label="M2 existing RIGHT REVERSE (D5)" idLabPos="-110,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Orange" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="Led" CircId="Led-Motor-M3-F" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-330" rotation="0" hflip="1" vflip="1" label="M3 N20 LEFT FORWARD (D6)" idLabPos="-95,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Green" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="Led" CircId="Led-Motor-M3-R" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-270" rotation="0" hflip="1" vflip="1" label="M3 N20 LEFT REVERSE (D7)" idLabPos="-95,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Orange" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="Led" CircId="Led-Motor-M4-F" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-210" rotation="0" hflip="1" vflip="1" label="M4 N20 RIGHT FORWARD (D8)" idLabPos="-100,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Green" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="Led" CircId="Led-Motor-M4-R" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-150" rotation="0" hflip="1" vflip="1" label="M4 N20 RIGHT REVERSE (D11)" idLabPos="-105,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Orange" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
 
 <item itemtype="Led" CircId="Led-Humidifier" mainComp="false" Show_id="true" Show_Val="false" Pos="760,270" rotation="0" hflip="1" vflip="1" label="humidifier relay proxy (A0)" idLabPos="-85,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Blue" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
 
@@ -156,13 +164,21 @@
 
 <item itemtype="Connector" uid="Connector-Line-R-Gnd" startpinid="Push-Line-R-switch0pinN" endpinid="Ground-Line-R-Gnd" pointList="426,-590,480,-590,480,-564" />
 
-<item itemtype="Connector" uid="Connector-Motor-LF" startpinid="Uno-2-3" endpinid="Led-Motor-LF-lPin" pointList="108,-320,620,-320,620,-480,744,-480" />
+<item itemtype="Connector" uid="Connector-Motor-M1-F" startpinid="Uno-2-2" endpinid="Led-Motor-M1-F-lPin" pointList="108,-328,580,-328,580,-570,744,-570" />
 
-<item itemtype="Connector" uid="Connector-Motor-RF" startpinid="Uno-2-5" endpinid="Led-Motor-RF-lPin" pointList="108,-304,640,-304,640,-388,744,-388" />
+<item itemtype="Connector" uid="Connector-Motor-M1-R" startpinid="Uno-2-3" endpinid="Led-Motor-M1-R-lPin" pointList="108,-320,600,-320,600,-510,744,-510" />
 
-<item itemtype="Connector" uid="Connector-Motor-LR" startpinid="Uno-2-6" endpinid="Led-Motor-LR-lPin" pointList="108,-296,660,-296,660,-300,744,-300" />
+<item itemtype="Connector" uid="Connector-Motor-M2-F" startpinid="Uno-2-4" endpinid="Led-Motor-M2-F-lPin" pointList="108,-312,620,-312,620,-450,744,-450" />
 
-<item itemtype="Connector" uid="Connector-Motor-RR" startpinid="Uno-2-11" endpinid="Led-Motor-RR-lPin" pointList="108,-248,680,-248,680,-208,744,-208" />
+<item itemtype="Connector" uid="Connector-Motor-M2-R" startpinid="Uno-2-5" endpinid="Led-Motor-M2-R-lPin" pointList="108,-304,640,-304,640,-390,744,-390" />
+
+<item itemtype="Connector" uid="Connector-Motor-M3-F" startpinid="Uno-2-6" endpinid="Led-Motor-M3-F-lPin" pointList="108,-296,660,-296,660,-330,744,-330" />
+
+<item itemtype="Connector" uid="Connector-Motor-M3-R" startpinid="Uno-2-7" endpinid="Led-Motor-M3-R-lPin" pointList="108,-288,680,-288,680,-270,744,-270" />
+
+<item itemtype="Connector" uid="Connector-Motor-M4-F" startpinid="Uno-2-8" endpinid="Led-Motor-M4-F-lPin" pointList="108,-272,700,-272,700,-210,744,-210" />
+
+<item itemtype="Connector" uid="Connector-Motor-M4-R" startpinid="Uno-2-11" endpinid="Led-Motor-M4-R-lPin" pointList="108,-248,720,-248,720,-150,744,-150" />
 
 <item itemtype="Connector" uid="Connector-Humidifier" startpinid="Uno-3-A0" endpinid="Led-Humidifier-lPin" pointList="252,416,620,416,620,272,744,272" />
 

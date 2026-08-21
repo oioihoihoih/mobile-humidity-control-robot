@@ -6,7 +6,7 @@
 자동차의 RF, 전력, 기구 성능을 시뮬레이션하지 않는다.
 
 - SensorUno: I2C master, DHT22 모델, 서버·RFID·HOME 입력 프록시
-- MotorUno: I2C slave `0x08`, HOME interlock, 라인 입력과 2WD 출력 프록시
+- MotorUno: I2C slave `0x08`, HOME interlock, 라인 입력과 M1~M4 4WD 출력 프록시
 - ActuatorUno: I2C slave `0x09`, 가습·펠티어·팬 출력과 LCD 프록시
 - 경로 모델: `HOME → ZONE2 → ZONE99`, 복귀는 역순
 
@@ -22,7 +22,7 @@
 | 서버 명령과 복귀 명령 | 버튼 입력 |
 | ZONE2/ZONE99 태그 판정 결과 | RFID 이벤트 버튼; 실제 UID 없음 |
 | HOME 마커와 보정 | HOME 버튼 + 두 IR 입력 |
-| 좌·우 구동 모터 각 1개 | 좌·우 정/역방향 LED |
+| M1/M2 기존 모터 + M3/M4 N20 1:298 | 네 채널별 FORWARD/REVERSE LED 8개 |
 | active-low 릴레이와 고전력 부하 | 가습·펠티어·팬 LED |
 | LCD1602 I2C 백팩 | `I2CToParallel` + `Hd44780` 16×2 |
 
@@ -30,6 +30,13 @@ DHT22만 SimulIDE의 센서 모델을 직접 사용한다. ESP-01 AT 펌웨어, 
 RC522 무선 판독, 모터 전류·토크·제동 거리, 릴레이 접점과 펠티어 열 거동은
 검증 범위 밖이다. LED가 켜지는 것은 제어 신호가 해당 상태가 됐다는 뜻일 뿐,
 실제 부하가 동작했다는 증거가 아니다.
+
+Motor 프록시에서 명령 `1`은 M1~M4 전진, 명령 `2`는 차체를 돌리지 않는
+M1~M4 직선 후진(`REVERSE_HOME`)이다. N20 축 뒤쪽의 HC-SR04는 실물에서
+복귀 출발과 주행 중 정지를 보조하며, 이 회로에는 거리 모델이 없다. 따라서
+stale·STUCK_HIGH·근거리 출발 거절과 PAUSE 성능은 프록시 검증 결과에 포함하지
+않는다. Motor 프록시는 대신 command 7/status 8 세대 handshake를 재현해
+구형 회전 의미가 섞이면 HOME 보정이 열리지 않는 계약을 확인한다.
 
 ## 실행 전 검증
 
@@ -87,5 +94,5 @@ python scripts\check.py
 ## 지원하지 않는 회로
 
 이 폴더의 다른 회로와 데모 펌웨어는 초기 아이디어 보존용이다. 현재 3 Uno ·
-2WD 구조의 회귀 근거, 핀맵 또는 배선 지침으로 사용하지 않는다. 새 검증과
+4WD 구조의 회귀 근거, 핀맵 또는 배선 지침으로 사용하지 않는다. 새 검증과
 스크린샷은 지원 회로와 build manifest를 통과한 세 프록시만 사용한다.

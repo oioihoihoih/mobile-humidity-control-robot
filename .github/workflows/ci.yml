@@ -45,10 +45,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Create public CI network configuration
-        run: >-
-          cp
-          firmware/uno_robot_esp01_rfid_relay/robot_network_config.example.h
-          firmware/uno_robot_esp01_rfid_relay/robot_network_config.h
+        run: |
+          cp firmware/uno_robot_esp01_rfid_relay/robot_network_config.example.h firmware/uno_robot_esp01_rfid_relay/robot_network_config.h
+          cp firmware/uno_zone2_rfid_drive_diagnostic/zone2_rfid_drive_config.example.h firmware/uno_zone2_rfid_drive_diagnostic/zone2_rfid_drive_config.h
       - uses: arduino/compile-sketches@v1
         with:
           fqbn: arduino:avr:uno
@@ -59,6 +58,8 @@ jobs:
             - firmware/uno_robot_esp01_rfid_relay
             - firmware/uno_line_tracker_motor_controller
             - firmware/uno_humidity_module_controller
+            - firmware/uno_motor_power_diagnostic
+            - firmware/uno_zone2_rfid_drive_diagnostic
           libraries: |
             - name: DHT sensor library
               version: 1.4.6

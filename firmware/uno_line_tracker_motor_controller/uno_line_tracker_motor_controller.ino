@@ -5,13 +5,16 @@
 // [MotorUno / I2C 슬레이브 주소 0x08]
 // SensorUno SDA/SCL -> A4/A5
 // 왼쪽/오른쪽 IR  -> D9/D10
-// 모터 실드 M1/M2 -> 왼쪽/오른쪽 구동 모터
+// 모터 실드 M1/M3 -> 왼쪽 축, M2/M4 -> 오른쪽 축
+// M1/M2는 기존 모터, M3/M4는 새 N20 1:298 후륜 모터
 
 constexpr byte I2C_ADDRESS = 0x08;
 
 constexpr byte COMMAND_STOP = 0;
-constexpr byte COMMAND_OUTBOUND = 1;
-constexpr byte COMMAND_RETURN = 2;
+// v2 이동 명령은 구형 1/2와 값 자체를 분리한다. 어느 한 보드만 구형으로
+// 교체돼도 상대 보드가 반대 방향 의미를 실행하지 않고 INVALID로 정지한다.
+constexpr byte COMMAND_OUTBOUND = 0x11;
+constexpr byte COMMAND_RETURN = 0x12;
 constexpr byte COMMAND_PAUSE = 3;
 constexpr byte COMMAND_RESUME = 4;
 // SensorUno는 주행 중 500ms 정도마다 이 값을 보내 통신 생존을 알린다.
@@ -20,6 +23,10 @@ constexpr byte COMMAND_KEEPALIVE = 5;
 // HOME의 넓은 검은 마커 위에 정차했음을 두 IR 센서로 확인한 뒤에만
 // 주행 interlock을 해제한다. 확인 과정에서는 모터를 움직이지 않는다.
 constexpr byte COMMAND_HOME_SYNC = 6;
+// 이동 명령의 의미가 4모터 절대 전진/후진으로 바뀐 세대다. SensorUno가
+// 이 명령을 먼저 exact ACK로 확인하지 않으면 HOME_SYNC와 주행을 거절한다.
+// 구형 MotorUno는 7을 invalid로 안전 정지하므로 부분 업로드도 움직이지 않는다.
+constexpr byte COMMAND_PROTOCOL_SYNC = 7;
 
 constexpr byte STATUS_IDLE = 0;
 constexpr byte STATUS_RUNNING = 1;
@@ -34,6 +41,7 @@ constexpr byte STATUS_INVALID_COMMAND = 5;
 // 마커나 HOME 출발 마커를 제한시간 안에 벗어나지 못한 경우에 사용한다.
 constexpr byte STATUS_UNEXPECTED_MARKER = 6;
 constexpr byte STATUS_CALIBRATION_REQUIRED = 7;
+constexpr byte STATUS_PROTOCOL_REQUIRED = 8;
 
 constexpr byte LEFT_IR_PIN = 9;
 constexpr byte RIGHT_IR_PIN = 10;
@@ -46,11 +54,20 @@ constexpr bool LINE_BLACK_IS_HIGH = true;
 // 반드시 false로 두어 라인센서와 HOME 마커 안전 로직을 우회하지 않는다.
 constexpr bool BENCH_RFID_ONLY_MODE = false;
 
-// 6V(AA 4개) + 현재 2WD 실물에서 PWM 150은 기동하지 않았고 255에서
-// 좌우 모터 회전을 확인했다. 첫 라인/RFID 시험은 검증된 값으로 시작하고,
-// 실제 선 추종 안정성을 본 뒤 감속값을 다시 측정한다.
-constexpr byte MOTOR_SPEED = 255;
-constexpr unsigned long RETURN_TURN_MS = 700;
+// 아래 255는 이전 2모터 벤치의 기동 관찰값일 뿐 현재 4모터 검증 근거가 아니다.
+// 기존 축과 N20 1:298 후륜은 기어비와 바퀴 크기가 다르므로 PWM을 분리한다.
+// 현재는 확인된 기동값 255로 시작한다. 차체를 바닥에 놓고 실제 속도를 잰 뒤
+// 더 빠른 축의 값만 낮춰 직진 속도를 맞춘다.
+constexpr byte EXISTING_AXLE_SPEED = 255;
+constexpr byte N20_REAR_AXLE_SPEED = 255;
+// 라인 보정은 바퀴를 반대 방향으로 돌리지 않고 한쪽 축만 살짝 감속한다.
+constexpr byte TRACKING_INNER_PERCENT = 80;
+// 현재 IR 센서가 후진 시 차체의 뒤쪽(주행 기준 trailing)에 남는 배치다.
+// 실물에서 후진 보정이 반대로 나타나면 이 값만 false로 바꾼다.
+constexpr bool MIRROR_LINE_CORRECTION_WHEN_REVERSING = true;
+// 전진↔후진이 바뀌면 모든 H-bridge 출력을 먼저 해제한다. 명시적 STOP 직후
+// 반대 방향 명령이 와도 마지막 RELEASE부터 이 시간은 반드시 보장한다.
+constexpr unsigned long DIRECTION_CHANGE_DEAD_TIME_MS = 120;
 constexpr unsigned long HOME_MARKER_CLEAR_TIMEOUT_MS = 2000;
 // 현재 배선에서는 검정=HIGH, 바닥=LOW이며 검은 선이 두 센서 사이에 있을
 // 때 LOW/LOW로 직진한다. HIGH/HIGH는 두 센서가 모두 검정을 읽는 넓은
@@ -63,8 +80,12 @@ constexpr unsigned long SENSOR_LOG_INTERVAL_MS = 1000;
 // 오지 않으면 마지막 명령을 신뢰하지 않고 MotorUno가 자체 정지한다.
 constexpr unsigned long CONTROL_WATCHDOG_MS = 2000;
 
-AF_DCMotor motorLeft(1);
-AF_DCMotor motorRight(2);
+// 직선 왕복 차체이므로 실드의 네 채널을 모두 사용한다.
+// M1과 M3가 같은 물리 방향, M2와 M4가 같은 물리 방향으로 회전해야 한다.
+AF_DCMotor motorExistingLeft(1);
+AF_DCMotor motorExistingRight(2);
+AF_DCMotor motorN20RearLeft(3);
+AF_DCMotor motorN20RearRight(4);
 
 // I2C 콜백은 인터럽트 안에서 실행되므로 명령값만 저장하고
 // 실제 모터 제어와 시리얼 출력은 loop()에서 처리한다.
@@ -74,57 +95,132 @@ volatile bool commandPending = false;
 // KEEPALIVE를 별도 플래그로 받아, KEEPALIVE가 아직 처리하지 않은
 // OUTBOUND/RETURN/STOP 명령을 덮어쓰지 못하게 한다.
 volatile bool keepalivePending = false;
-volatile byte motorStatus = STATUS_CALIBRATION_REQUIRED;
+volatile byte motorStatus = STATUS_PROTOCOL_REQUIRED;
 // SensorUno가 오래된 상태값을 새 명령의 ACK로 오인하지 않도록, 실제로
 // loop()에서 적용을 끝낸 명령과 그 8비트 순번을 상태와 함께 반환한다.
 volatile byte appliedCommand = COMMAND_STOP;
 volatile byte appliedSequence = 0;
 
 byte activeCommand = COMMAND_STOP;
-// COMMAND_RETURN(2)는 HOME 전용이 아니라 현재 물리 방향을 180도 뒤집는
-// 명령이다. STOP/OUTBOUND(현재 방향 진행)는 이 값을 보존한다. 전원 켤 때
-// 방향값은 outbound로 시작하지만 HOME_SYNC가 성공하기 전에는 주행할 수
-// 없다.
+// 차체를 돌리지 않는 직선 경로다. OUTBOUND(0x11)는 네 바퀴 전진,
+// RETURN(0x12)는 네 바퀴 후진이며, 같은 명령을 반복해도 방향이 뒤집히지 않는다.
 bool headingHomebound = false;
 bool calibrated = false;
-bool returnTurnActive = false;
+bool protocolValidated = false;
 bool pausedBySensorUno = false;
+bool directionChangeDeadTimeActive = false;
+bool motorOutputsEnergized = false;
+bool motorDirectionKnown = false;
+bool lastDrivenHomebound = false;
 bool homeMarkerLatched = false;
 bool lineFollowingStarted = false;
 bool homeMarkerClearing = false;
 bool homeMarkerDetectionArmed = false;
 bool bothHighCandidate = false;
-unsigned long returnTurnStartedAt = 0;
-unsigned long returnTurnElapsedAtPause = 0;
 unsigned long homeMarkerClearStartedAt = 0;
 unsigned long homeMarkerClearElapsedAtPause = 0;
+unsigned long directionChangeDeadTimeStartedAt = 0;
+unsigned long lastMotorReleaseAt = 0;
 unsigned long bothHighStartedAt = 0;
 unsigned long lastSensorLogAt = 0;
 unsigned long lastValidControlAt = 0;
 
+byte scaledTrackingSpeed(byte fullSpeed) {
+  return static_cast<byte>((static_cast<unsigned int>(fullSpeed) *
+                            TRACKING_INNER_PERCENT) / 100U);
+}
+
+void setLeftPairSpeed(bool reduced) {
+  motorExistingLeft.setSpeed(reduced ? scaledTrackingSpeed(EXISTING_AXLE_SPEED)
+                                     : EXISTING_AXLE_SPEED);
+  motorN20RearLeft.setSpeed(reduced ? scaledTrackingSpeed(N20_REAR_AXLE_SPEED)
+                                    : N20_REAR_AXLE_SPEED);
+}
+
+void setRightPairSpeed(bool reduced) {
+  motorExistingRight.setSpeed(reduced ? scaledTrackingSpeed(EXISTING_AXLE_SPEED)
+                                      : EXISTING_AXLE_SPEED);
+  motorN20RearRight.setSpeed(reduced ? scaledTrackingSpeed(N20_REAR_AXLE_SPEED)
+                                     : N20_REAR_AXLE_SPEED);
+}
+
+void setCruiseSpeeds() {
+  setLeftPairSpeed(false);
+  setRightPairSpeed(false);
+}
+
+void runLeftPair(uint8_t direction) {
+  motorExistingLeft.run(direction);
+  motorN20RearLeft.run(direction);
+}
+
+void runRightPair(uint8_t direction) {
+  motorExistingRight.run(direction);
+  motorN20RearRight.run(direction);
+}
+
 void stopMotors() {
-  motorLeft.run(RELEASE);
-  motorRight.run(RELEASE);
+  motorExistingLeft.run(RELEASE);
+  motorExistingRight.run(RELEASE);
+  motorN20RearLeft.run(RELEASE);
+  motorN20RearRight.run(RELEASE);
+  if (motorOutputsEnergized) {
+    motorOutputsEnergized = false;
+    lastMotorReleaseAt = millis();
+  }
 }
 
-void driveForward() {
-  motorLeft.run(FORWARD);
-  motorRight.run(FORWARD);
+void markMotorDrive(bool homebound) {
+  motorOutputsEnergized = true;
+  motorDirectionKnown = true;
+  lastDrivenHomebound = homebound;
 }
 
-void turnLeft() {
-  motorLeft.run(RELEASE);
-  motorRight.run(FORWARD);
+void driveOutbound() {
+  setCruiseSpeeds();
+  runLeftPair(FORWARD);
+  runRightPair(FORWARD);
+  markMotorDrive(false);
 }
 
-void turnRight() {
-  motorLeft.run(FORWARD);
-  motorRight.run(RELEASE);
+void driveHomebound() {
+  setCruiseSpeeds();
+  runLeftPair(BACKWARD);
+  runRightPair(BACKWARD);
+  markMotorDrive(true);
 }
 
-void spinForReturn() {
-  motorLeft.run(BACKWARD);
-  motorRight.run(FORWARD);
+void driveForCurrentHeading() {
+  if (headingHomebound) {
+    driveHomebound();
+  } else {
+    driveOutbound();
+  }
+}
+
+// 제자리 회전은 하지 않는다. 네 바퀴가 모두 현재 주행 방향을 유지하면서
+// 안쪽 축만 잠시 감속해 선을 부드럽게 보정한다. 후진할 때는 센서가 진행
+// 방향의 뒤쪽에 있으므로 전진 때와 반대쪽 축을 감속한다.
+void correctTowardLeft() {
+  const uint8_t direction = headingHomebound ? BACKWARD : FORWARD;
+  const bool mirror =
+      headingHomebound && MIRROR_LINE_CORRECTION_WHEN_REVERSING;
+  setLeftPairSpeed(!mirror);
+  setRightPairSpeed(mirror);
+  runLeftPair(direction);
+  runRightPair(direction);
+  markMotorDrive(headingHomebound);
+}
+
+void correctTowardRight() {
+  const uint8_t direction = headingHomebound ? BACKWARD : FORWARD;
+  const bool mirror =
+      headingHomebound && MIRROR_LINE_CORRECTION_WHEN_REVERSING;
+  setLeftPairSpeed(mirror);
+  setRightPairSpeed(!mirror);
+  runLeftPair(direction);
+  runRightPair(direction);
+  markMotorDrive(headingHomebound);
 }
 
 void resetMarkerCandidateState() {
@@ -183,7 +279,10 @@ void sendI2cStatus() {
 }
 
 bool isValidControlCommand(byte command) {
-  return command <= COMMAND_HOME_SYNC;
+  return command == COMMAND_STOP || command == COMMAND_OUTBOUND ||
+         command == COMMAND_RETURN || command == COMMAND_PAUSE ||
+         command == COMMAND_RESUME || command == COMMAND_KEEPALIVE ||
+         command == COMMAND_HOME_SYNC || command == COMMAND_PROTOCOL_SYNC;
 }
 
 void publishAppliedCommand(byte command, byte sequence) {
@@ -199,10 +298,9 @@ void publishAppliedCommand(byte command, byte sequence) {
 void enterSafeStop(byte status) {
   stopMotors();
   activeCommand = COMMAND_STOP;
-  returnTurnActive = false;
-  returnTurnStartedAt = 0;
   pausedBySensorUno = false;
-  returnTurnElapsedAtPause = 0;
+  directionChangeDeadTimeActive = false;
+  directionChangeDeadTimeStartedAt = 0;
   resetHomeMarkerState();
   resetMarkerCandidateState();
   motorStatus = status;
@@ -241,9 +339,24 @@ void applyCommand(byte command) {
   lastValidControlAt = millis();
 
   if (command == COMMAND_KEEPALIVE) {
-    // Calibration 전 KEEPALIVE도 유효하지만 interlock 상태를 해제하지는
-    // 않는다. 어떤 경우에도 이 경로에서 모터가 움직이지 않게 재확인한다.
-    if (!calibrated) enterSafeStop(STATUS_CALIBRATION_REQUIRED);
+    if (!protocolValidated) enterSafeStop(STATUS_PROTOCOL_REQUIRED);
+    else if (!calibrated) enterSafeStop(STATUS_CALIBRATION_REQUIRED);
+    return;
+  }
+
+  if (command == COMMAND_PROTOCOL_SYNC) {
+    calibrated = false;
+    protocolValidated = true;
+    enterSafeStop(STATUS_PROTOCOL_REQUIRED);
+    Serial.println(F("[PROTOCOL] 4WD v2 sync confirmed; HOME_SYNC required"));
+    return;
+  }
+
+  // 4모터 의미를 모르는 구형 SensorUno가 STOP/HOME_SYNC를 보내더라도
+  // 출력은 계속 RELEASE하고 v2 이동 명령을 절대 실행하지 않는다.
+  if (!protocolValidated) {
+    enterSafeStop(STATUS_PROTOCOL_REQUIRED);
+    Serial.println(F("[PROTOCOL] command rejected: v2 sync required"));
     return;
   }
 
@@ -277,9 +390,6 @@ void applyCommand(byte command) {
     }
     if (!pausedBySensorUno) {
       pausedBySensorUno = true;
-      if (returnTurnActive) {
-        returnTurnElapsedAtPause = millis() - returnTurnStartedAt;
-      }
       if (homeMarkerClearing) {
         homeMarkerClearElapsedAtPause = millis() - homeMarkerClearStartedAt;
       }
@@ -296,9 +406,6 @@ void applyCommand(byte command) {
       return;
     }
     pausedBySensorUno = false;
-    if (returnTurnActive) {
-      returnTurnStartedAt = millis() - returnTurnElapsedAtPause;
-    }
     if (homeMarkerClearing) {
       homeMarkerClearStartedAt = millis() - homeMarkerClearElapsedAtPause;
     }
@@ -308,30 +415,69 @@ void applyCommand(byte command) {
     return;
   }
 
+  const bool nextHomebound = command == COMMAND_RETURN;
+  const bool preserveExistingDeadTime =
+      directionChangeDeadTimeActive && headingHomebound == nextHomebound;
+  const bool reversesLastDrive =
+      motorDirectionKnown && lastDrivenHomebound != nextHomebound;
+  const bool releaseIntervalIncomplete =
+      motorOutputsEnergized ||
+      millis() - lastMotorReleaseAt < DIRECTION_CHANGE_DEAD_TIME_MS;
+  const bool startNewDeadTime =
+      !preserveExistingDeadTime && reversesLastDrive &&
+      releaseIntervalIncomplete;
+
   activeCommand = command;
-  returnTurnActive = false;
   pausedBySensorUno = false;
-  returnTurnElapsedAtPause = 0;
   resetHomeMarkerState();
   resetMarkerCandidateState();
-
+  headingHomebound = nextHomebound;
   motorStatus = STATUS_RUNNING;
-  if (command == COMMAND_RETURN) {
-    headingHomebound = !headingHomebound;
-    returnTurnActive = true;
-    returnTurnStartedAt = millis();
-    spinForReturn();
-    Serial.print(F("[I2C] TURN_AROUND -> heading="));
-    Serial.println(headingHomebound ? F("HOMEBOUND") : F("OUTBOUND"));
-  } else {
-    Serial.print(F("[I2C] CONTINUE -> heading="));
-    Serial.println(headingHomebound ? F("HOMEBOUND") : F("OUTBOUND"));
+
+  if (startNewDeadTime) {
+    stopMotors();
+    directionChangeDeadTimeActive = true;
+    directionChangeDeadTimeStartedAt = millis();
+    Serial.println(F("[MOTOR] direction changed -> all RELEASE for 120ms"));
+    return;
   }
+  if (preserveExistingDeadTime) {
+    // 같은 방향의 새 순번이 도착해도 진행 중인 출력 해제 시간을 줄이지 않는다.
+    stopMotors();
+    return;
+  }
+
+  directionChangeDeadTimeActive = false;
+  directionChangeDeadTimeStartedAt = 0;
+  if (headingHomebound) {
+    driveHomebound();
+    Serial.println(F("[I2C] RETURN -> four motors BACKWARD / HOMEBOUND"));
+  } else {
+    driveOutbound();
+    Serial.println(F("[I2C] OUTBOUND -> four motors FORWARD"));
+  }
+}
+
+bool serviceDirectionChangeDeadTime() {
+  if (!directionChangeDeadTimeActive) return false;
+
+  // 대기 시간 내내 네 채널을 모두 RELEASE로 유지한다. delay()를 쓰지 않으므로
+  // 이 동안에도 I2C ACK, KEEPALIVE, STOP, watchdog 처리는 계속 동작한다.
+  stopMotors();
+  if (millis() - directionChangeDeadTimeStartedAt <
+      DIRECTION_CHANGE_DEAD_TIME_MS) {
+    return true;
+  }
+
+  directionChangeDeadTimeActive = false;
+  directionChangeDeadTimeStartedAt = 0;
+  Serial.println(F("[MOTOR] direction dead-time complete"));
+  return false;
 }
 
 void followLine() {
   if (BENCH_RFID_ONLY_MODE) {
-    driveForward();
+    driveForCurrentHeading();
     motorStatus = STATUS_RUNNING;
     return;
   }
@@ -359,7 +505,7 @@ void followLine() {
       homeMarkerDetectionArmed = false;
       homeMarkerClearStartedAt = millis();
       homeMarkerClearElapsedAtPause = 0;
-      driveForward();
+      driveOutbound();
       motorStatus = STATUS_RUNNING;
       Serial.println(F("[DEPARTURE] HOME marker detected -> clearing forward"));
       return;
@@ -374,7 +520,7 @@ void followLine() {
       homeMarkerClearElapsedAtPause = 0;
       Serial.println(F("[DEPARTURE] HOME marker cleared -> continuous tracking"));
     } else {
-      driveForward();
+      driveOutbound();
       motorStatus = STATUS_RUNNING;
       return;
     }
@@ -391,8 +537,7 @@ void followLine() {
       Serial.println(F("[LINE] both sensors HIGH -> provisional safety stop"));
     } else if (millis() - bothHighStartedAt >= BOTH_HIGH_CONFIRM_MS) {
       if (headingHomebound && homeMarkerDetectionArmed) {
-        // command 2 직후뿐 아니라 ZONE2 RFID 정지 후 command 1로 같은
-        // 복귀 방향을 계속 가는 동안에도 물리 방향값은 HOMEBOUND로 남는다.
+        // RETURN(0x12)으로 후진 중 HOME의 넓은 검은 마커를 확인한 경우다.
         // MotorUno는 목적지를 모르므로 최종 HOME 판단은 SensorUno가 한다.
         homeMarkerLatched = true;
         motorStatus = STATUS_STOP_LINE;
@@ -411,13 +556,13 @@ void followLine() {
     }
 
     if (!leftBlack && !rightBlack) {
-      driveForward();
+      driveForCurrentHeading();
       motorStatus = STATUS_RUNNING;
     } else if (leftBlack && !rightBlack) {
-      turnLeft();
+      correctTowardLeft();
       motorStatus = STATUS_RUNNING;
     } else {  // left background / right black
-      turnRight();
+      correctTowardRight();
       motorStatus = STATUS_RUNNING;
     }
   }
@@ -516,6 +661,8 @@ void handleSerialDiagnostic() {
   Serial.print(homeMarkerClearing ? 1 : 0);
   Serial.print(F(" markerArmed="));
   Serial.print(homeMarkerDetectionArmed ? 1 : 0);
+  Serial.print(F(" directionDeadTime="));
+  Serial.print(directionChangeDeadTimeActive ? 1 : 0);
   Serial.print(F(" bothHighCandidate="));
   Serial.print(bothHighCandidate ? 1 : 0);
   Serial.print(F(" bothHighMs="));
@@ -528,11 +675,11 @@ void setup() {
   pinMode(LEFT_IR_PIN, INPUT);
   pinMode(RIGHT_IR_PIN, INPUT);
 
-  motorLeft.setSpeed(MOTOR_SPEED);
-  motorRight.setSpeed(MOTOR_SPEED);
+  setCruiseSpeeds();
   calibrated = false;
+  protocolValidated = false;
   headingHomebound = false;
-  enterSafeStop(STATUS_CALIBRATION_REQUIRED);
+  enterSafeStop(STATUS_PROTOCOL_REQUIRED);
 
   Wire.begin(I2C_ADDRESS);
   Wire.onReceive(receiveI2cCommand);
@@ -540,15 +687,24 @@ void setup() {
 
   Serial.println(F("[BOOT] MotorUno I2C slave started"));
   Serial.println(F("[BOOT] address=0x08 SDA=A4 SCL=A5"));
-  Serial.println(F("[BOOT] IR=D9/D10, HC-SR04 is on SensorUno"));
-  Serial.println(F("[BOOT] protocol: 0=STOP 1=OUTBOUND 2=RETURN 3=PAUSE 4=RESUME 5=KEEPALIVE 6=HOME_SYNC"));
+  Serial.println(F("[BOOT] IR=D9/D10, rear HC-SR04 is on SensorUno"));
+  Serial.println(F("[BOOT] 4WD: M1/M3=LEFT, M2/M4=RIGHT"));
+  Serial.print(F("[BOOT] PWM existing M1/M2="));
+  Serial.print(EXISTING_AXLE_SPEED);
+  Serial.print(F(" N20 M3/M4="));
+  Serial.println(N20_REAR_AXLE_SPEED);
+  Serial.print(F("[BOOT] direction change dead-time="));
+  Serial.print(DIRECTION_CHANGE_DEAD_TIME_MS);
+  Serial.println(F("ms"));
+  Serial.println(F("[BOOT] protocol v2: 7=SYNC, 6=HOME, 1=FWD, 2=REVERSE"));
+  Serial.println(F("[BOOT] RETURN uses straight reverse; no 180-degree turn"));
   Serial.println(F("[BOOT] ZONE arrival: SensorUno RFID -> STOP command"));
   Serial.println(F("[BOOT] HOME arrival: return-direction HIGH/HIGH marker"));
-  Serial.println(F("[BOOT] initial heading=OUTBOUND; HOME_SYNC required before motion"));
+  Serial.println(F("[BOOT] protocol sync then HOME_SYNC required before motion"));
   if (BENCH_RFID_ONLY_MODE) {
     Serial.println(F("[BOOT] BENCH RFID-ONLY: line/marker bypassed"));
   }
-  Serial.println(F("[BOOT] status: 0=IDLE 1=RUNNING 2=PAUSED 3=HOME_MARKER 4=WATCHDOG 5=INVALID 6=UNEXPECTED_MARKER 7=CALIBRATION_REQUIRED"));
+  Serial.println(F("[BOOT] status 8=PROTOCOL_REQUIRED, 7=CALIBRATION_REQUIRED"));
   Serial.print(F("[BOOT] HOME marker clear timeout="));
   Serial.print(HOME_MARKER_CLEAR_TIMEOUT_MS);
   Serial.println(F("ms"));
@@ -568,15 +724,7 @@ void loop() {
   handleSerialDiagnostic();
 
   if (activeCommand == COMMAND_STOP || pausedBySensorUno) return;
-
-  if (returnTurnActive) {
-    if (millis() - returnTurnStartedAt < RETURN_TURN_MS) {
-      spinForReturn();
-      return;
-    }
-    returnTurnActive = false;
-    Serial.println(F("[MOTOR] return turn complete -> line tracking"));
-  }
+  if (serviceDirectionChangeDeadTime()) return;
 
   followLine();
 }

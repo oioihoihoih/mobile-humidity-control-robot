@@ -12,13 +12,18 @@ ActuatorUno를 독립된 ATmega328P로 실행하고 A4/A5 I2C 계약과 상태 �
 | 보드 | I2C 역할 | 프록시 기능 |
 | --- | --- | --- |
 | SensorUno (`Uno-1`) | master | HOME 보정, 서버 명령, 역 순서, RFID 이벤트, DHT22 telemetry |
-| MotorUno (`Uno-2`) | slave `0x08` | 보정 인터록, 라인 입력, 회전, watchdog, 좌·우 2WD 출력 |
+| MotorUno (`Uno-2`) | slave `0x08` | 보정 인터록, 라인 입력, watchdog, M1~M4 직선 전진·후진 출력 |
 | ActuatorUno (`Uno-3`) | slave `0x09` | 가습·펠티어·팬 시퀀스와 LCD 표시 |
 
 Motor 명령은 `[command, sequence]`, 상태는
 `[status, appliedCommand, appliedSequence]`다. MotorUno는 부팅 시
-`CALIBRATION_REQUIRED(7)`이며, 두 IR 입력이 HOME 조건일 때
-`HOME_SYNC(6)`를 같은 sequence로 ACK한 뒤에만 이동을 허용한다.
+`PROTOCOL_REQUIRED(8)`이며, SensorUno가 `PROTOCOL_SYNC(7)` exact ACK로
+4모터 명령 의미를 확인한 뒤 `CALIBRATION_REQUIRED(7)`로 진행한다. 두 IR
+입력이 HOME 조건일 때 `HOME_SYNC(6)`를 ACK한 뒤에만 이동을 허용한다.
+versioned `OUTBOUND(0x11)`은 M1~M4 전진, `RETURN(0x12)`은 M1~M4 직선
+후진이며 구형 값 `1/2`는 INVALID로 정지한다. 기존의
+700 ms 제자리 회전 동작은 없으며, STOP 직후를 포함해 마지막 실제 구동과
+방향이 바뀌면 RELEASE 시점부터 120 ms 동안 모든 방향 출력을 OFF로 둔다.
 
 Actuator 명령은 `[0xA5, sequence, command, CRC8]`, 상태는
 `[status, command, appliedSequence, displaySequence, flags, CRC8]`다.
@@ -39,21 +44,24 @@ Motor 상태 바이트를 `0xE0` 계열, Actuator 상태 바이트를 `0xF0` 계
 | 서버 명령 | SensorUno 명령 버튼 |
 | ZONE2/ZONE99 RFID 판정 | 구역 이벤트 버튼; `<ZONE2_TAG_UID>` 같은 실제 UID를 사용하지 않음 |
 | HOME 마커와 보정 | HOME 버튼 + MotorUno D9/D10 입력 |
-| 왼쪽 모터 1개 / 오른쪽 모터 1개 | 좌·우 정/역방향 LED |
+| M1/M2 기존 모터 + M3/M4 N20 1:298 | M1~M4별 FORWARD/REVERSE LED 8개 |
 | IR 라인센서 | 좌·우 편차 버튼 |
 | 가습·펠티어·팬 릴레이 | Actuator LED |
 | LCD1602 백팩 | 주소 `0x27`의 `I2CToParallel` + 16×2 `Hd44780` |
 
 프록시 버튼은 서버나 RFID 리더가 이미 판정한 이벤트를 주입한다. 회로는
 ESP-01 AT, Wi-Fi HTTP, 카드 RF 판독, 태그 거리, 모터 전류·토크, 실제 릴레이
-접점, 고전력 부하와 열·결로를 검증하지 않는다. HC-SR04는 현재 운영 코드에서도
-관측 전용이므로 이 회로에서 제외한다.
+접점, 고전력 부하와 열·결로를 검증하지 않는다. 뒤쪽 N20 축에 설치한
+HC-SR04의 **복귀 후진 안전 보조**도 이 회로에서는 제외한다. 실물 운영 코드는
+후진 출발 전 stale/미준비·`STUCK_HIGH`·유효한 15cm 미만 값을 거절하고,
+주행 중 같은 위험을 `PAUSE`한 뒤 유효 clear 3회에서만 `RESUME`한다.
+`NO_ECHO`와 `OUT_OF_RANGE`는 넓은 공간일 수 있어 진단만 남긴다.
 
 ## 실행
 
 1. `simulide` 폴더 구조를 유지한 채 지원 `.sim2` 파일을 연다.
-2. 실행 직후 모든 출력 LED가 OFF이고 Motor 상태가 7인지 확인한다.
-3. 두 IR 입력이 HOME 조건일 때 `CALIBRATE_HOME / HOME` 또는 키 `h`를 누른다.
+2. 실행 직후 모든 출력 LED가 OFF이고 Motor 상태가 8인지 확인한다.
+3. 두 IR 입력이 HOME 조건일 때 `CALIBRATE_HOME / HOME` 또는 키 `h`를 누른다. Sensor 프록시는 command 7/status 8 handshake 뒤 HOME_SYNC를 연속 수행한다.
 4. LCD의 온·습도와 상태를 확인하고 필요한 경우 세 시리얼 터미널을 연다.
 5. 아래 표의 입력을 한 번씩 순서대로 준다.
 
@@ -63,24 +71,25 @@ ESP-01 AT, Wi-Fi HTTP, 카드 RF 판독, 태그 거리, 모터 전류·토크, �
 
 | 단계 | 입력 | 기대 상태 |
 | --- | --- | --- |
-| 1 | `CALIBRATE_HOME / HOME` (`h`) | 출력 OFF, HOME_SYNC ACK, `IDLE HOME` |
-| 2 | `ZONE99 DEHUMIDIFY` (`0`) | 좌·우 정방향 LED ON |
+| 1 | `CALIBRATE_HOME / HOME` (`h`) | 출력 OFF, PROTOCOL_SYNC → HOME_SYNC exact ACK, `IDLE HOME` |
+| 2 | `ZONE99 DEHUMIDIFY` (`0`) | M1~M4 FORWARD LED ON |
 | 3 | `RFID ZONE2` (`z`) | STOP, 중간 역 기록, 같은 방향 재출발 |
 | 4 | `RFID ZONE99` (`x`) | 모터 OFF, 팬 LED ON |
 | 5 | 단계 지연 | 펠티어 LED ON |
 | 6 | 액추에이터 시퀀스 종료 | 액추에이터 OFF, 서버 재판정 대기 |
-| 7 | `NORMAL / RETURN` (`r`) | 회전 프록시 뒤 HOME 방향 주행 |
-| 8 | `RFID ZONE2` (`z`) | 중간 역 확인 뒤 재출발 |
+| 7 | `NORMAL / RETURN` (`r`) | 회전 없이 M1~M4 REVERSE LED ON, HOME 방향 직선 후진 |
+| 8 | `RFID ZONE2` (`z`) | 중간 역 확인용 STOP 뒤 REVERSE_HOME으로 후진 재개 |
 | 9 | `HOME marker` (`h`) | 모든 출력 OFF, `HOME / IDLE` |
 
 가습 시나리오는 화면의 ZONE2/ZONE99 HUMIDIFY 입력을 사용한다. `ALL_STOP`
 입력은 어느 단계에서든 Motor와 Actuator 출력을 OFF로 만들어야 한다. 라인 입력은
-왼쪽 또는 오른쪽 편차 버튼으로 바꾸며, 출력 LED는 해당 시점의 방향 신호만
-뜻한다.
+왼쪽 또는 오른쪽 편차 버튼으로 바꾼다. 프록시는 제자리 회전 대신 현재 진행
+방향을 유지하며 한쪽 M1/M3 또는 M2/M4 묶음을 잠시 쉬게 한다. 출력 LED는
+해당 시점의 논리 방향 신호만 뜻한다.
 
 ## 오류 시나리오
 
-- HOME 보정 전 임무/복귀 입력은 상태 7로 차단되고 출력은 OFF다.
+- 부팅 직후 상태 8의 프로토콜 동기화와 상태 7의 HOME 보정 전에는 임무/복귀 출력이 OFF다.
 - 한쪽 IR을 HOME 조건에서 벗어나게 한 보정은 실패하고 움직이지 않는다.
 - MotorUno 재부팅 뒤 다음 상태 확인에서 SensorUno도 미보정 상태로 잠긴다.
 - 예상 순서와 다른 구역 이벤트는 SAFE_STOP으로 끝난다.
@@ -140,5 +149,5 @@ python scripts\check.py
 - `proxy scenario PASS`: 버튼/LED/LCD 상태 전이 관찰
 - `hardware PASS`: 별도 하드웨어 시험 기록이 있을 때만 사용
 
-다른 회로와 데모 펌웨어는 초기 아이디어 보존용이며 현재 3 Uno · 2WD 구조의
+다른 회로와 데모 펌웨어는 초기 아이디어 보존용이며 현재 3 Uno · 4WD 구조의
 검증 근거로 사용하지 않는다.

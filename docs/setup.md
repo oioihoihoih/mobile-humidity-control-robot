@@ -180,7 +180,9 @@ Copy-Item firmware/zone99_esp01_dht11/secrets.example.h firmware/zone99_esp01_dh
 | MotorUno | `firmware/uno_line_tracker_motor_controller/uno_line_tracker_motor_controller.ino` |
 | ActuatorUno | `firmware/uno_humidity_module_controller/uno_humidity_module_controller.ino` |
 
-SensorUno 빌드는 플래시 사용률이 약 99%이고 CI budget은 flash `32,100B`, SRAM `1,600B`입니다. 업로드 전 CI 또는 Arduino CLI 컴파일 결과를 확인하세요. 기능·로그 문자열·라이브러리를 추가한 뒤에는 크기뿐 아니라 SRAM과 메인 루프 지연도 다시 측정해야 합니다.
+2026-08-21 공개 예제 설정의 로컬 SensorUno 빌드는 플래시 `31,006B`(96%), SRAM `1,475B`였고 CI budget은 flash `32,100B`, SRAM `1,600B`입니다. 업로드 전 CI 또는 Arduino CLI 결과를 확인하고, 기능·로그·라이브러리를 바꾼 뒤에는 SRAM과 메인 루프 지연도 다시 측정하세요.
+
+SensorUno와 MotorUno는 4모터 절대 전진/후진에 versioned 명령 `0x11/0x12`를 사용하므로 두 보드를 같은 커밋으로 연속 업로드합니다. 일부만 업로드하면 구형 값 `1/2`가 INVALID이거나 `PROTOCOL_SYNC(7)` handshake가 실패해 주행이 잠기는 것이 정상입니다. ActuatorUno도 같은 릴리스로 맞춘 뒤 세 보드의 안전 부팅을 확인합니다.
 
 ## 8. USB 로그와 벤치 점검
 
@@ -202,7 +204,7 @@ USB 시리얼 로그가 필요한 경우 다른 시리얼 모니터를 닫고 �
 5. `CALIBRATE_HOME` 완료 ACK가 확인되기 전에는 이동 명령을 보내지 않습니다.
 6. 라인센서, 모터 방향, RFID 정지, 액추에이터를 각각 분리 시험합니다.
 
-현재 공개 검증 범위는 여기까지의 **벤치 검증**입니다. 바닥 트랙 왕복과 고전력 부하는 [현재 한계](limitations.md)의 순서로 별도 검증해야 합니다.
+이 절차는 현재 4모터 구성의 **검증 계획**입니다. 공개된 실물 증거는 이전 2모터 벤치 기록뿐이므로, 현재 커밋은 위 1단계부터 새로 기록해야 합니다. 바닥 트랙 왕복과 고전력 부하는 [현재 한계](limitations.md)의 순서로 진행합니다.
 
 ## 문제 해결
 

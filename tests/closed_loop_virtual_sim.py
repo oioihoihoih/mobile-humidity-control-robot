@@ -4,13 +4,13 @@ This is deliberately test-only.  It never opens a COM port, socket, MySQL
 connection, or the remote server.  The simulator joins the production server's
 humidity/revision/ACK functions to the behavioral Sensor/Motor/Actuator models
 from :mod:`test_robot_protocol_integration` and supplies only the physical
-environment events that software cannot create itself (RFID stations and the
-HOME stop marker).
+environment events that software cannot create itself (RFID stations, a
+no-card observation after direction reversal, and the HOME stop marker).
 
 The virtual clock advances in 100 ms quanta, so one complete mission takes a
 few milliseconds of host time while preserving the firmware's 0.5 s fan
-prestart, 5 s module run, 2 s fan cooldown, 0.7 s return turn, and 0.3 s HOME
-marker confirmation timings.
+prestart, 5 s module run, 2 s fan cooldown, 0.85 s RFID direction-settle guard,
+and 0.3 s HOME marker confirmation timings.
 """
 
 from __future__ import annotations
@@ -480,6 +480,13 @@ class ClosedLoopMissionSim:
         )
         return outcome
 
+    def _rfid_clear_after_reverse(self) -> None:
+        """Model the RC522 seeing open track after forward changes to reverse."""
+
+        self.clock.advance(250)
+        self.car.route.rfid_clear(self.clock.milliseconds)
+        self._record("RFID_FIELD", "NO_CARD", detail="direction guard clear")
+
     def _home_marker(self) -> str:
         self.clock.advance(1_000)
         first_high = self.clock.milliseconds
@@ -548,7 +555,8 @@ class ClosedLoopMissionSim:
             return_revision = int(returning["revision"])
 
             if self.zone == "ZONE99":
-                if self._rfid(RouteStation.ZONE2) != "PASS":
+                self._rfid_clear_after_reverse()
+                if self._rfid(RouteStation.ZONE2, travel_ms=750) != "PASS":
                     raise AssertionError("homebound ZONE2 RFID was not accepted")
             if self._home_marker() != "HOME":
                 raise AssertionError("HOME line marker did not finish return")

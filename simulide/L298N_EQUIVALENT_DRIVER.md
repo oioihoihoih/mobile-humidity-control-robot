@@ -1,6 +1,6 @@
 # L298N 등가 듀얼 H-브리지 구성
 
-> **레거시 회로 전용:** 이 MOSFET H-브리지는 초기 단일 Uno·4WD 파일의 구성입니다. 현재 3 Uno 회로는 MotorUno I2C `0x08`과 좌·우 단일 모터의 2WD 출력을 LED 프록시로 검증하며, 아래 배선을 사용하지 않습니다.
+> **레거시 회로 전용:** 이 MOSFET H-브리지는 초기 단일 Uno·4WD 파일의 구성입니다. 현재 3 Uno 회로는 MotorUno I2C `0x08`의 M1~M4 네 채널을 채널별 FORWARD/REVERSE LED 8개로 검증하며, 아래 배선을 사용하지 않습니다. 명령 2도 제자리 회전이 아닌 네 바퀴 직선 후진입니다.
 
 `mobile_humidity_robot_4wd_full_system.sim2`의 모터 드라이버 영역은 SimulIDE에 L298N 전용 모델이 없는 점을 보완한 **L298N 기능 등가 회로**입니다. Uno가 모터에 직접 연결되지 않습니다.
 

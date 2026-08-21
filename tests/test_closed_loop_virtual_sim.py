@@ -145,13 +145,18 @@ class SimulideStatusReadWorkaroundContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("MOTOR_HOME_SYNC = 6", sensor)
+        self.assertIn("MOTOR_PROTOCOL_SYNC = 7", sensor)
+        self.assertIn("MOTOR_PROTOCOL_REQUIRED = 8", sensor)
         self.assertIn("bool routeCalibrated = false", sensor)
         self.assertIn("if (!requireHomeCalibration()) return;", sensor)
         self.assertIn("sendMotor(MOTOR_HOME_SYNC)", sensor)
+        self.assertIn("sendMotor(MOTOR_PROTOCOL_SYNC)", sensor)
         self.assertIn("mode = SAFE_STOP", sensor)
 
         self.assertIn("COMMAND_HOME_SYNC = 6", motor)
+        self.assertIn("COMMAND_PROTOCOL_SYNC = 7", motor)
         self.assertIn("STATUS_CALIBRATION_REQUIRED = 7", motor)
+        self.assertIn("STATUS_PROTOCOL_REQUIRED = 8", motor)
         self.assertIn("bool calibrated = false", motor)
         self.assertIn("enterSafeStop(STATUS_CALIBRATION_REQUIRED)", motor)
         self.assertIn("digitalRead(LEFT_IR_PIN) != HIGH", motor)
@@ -172,6 +177,10 @@ class SimulideStatusReadWorkaroundContractTests(unittest.TestCase):
             sensor.index("bool performHomeCalibration()") :
             sensor.index("void startTask(")
         ]
+        self.assertLess(
+            calibrate.index("sendMotor(MOTOR_PROTOCOL_SYNC)"),
+            calibrate.index("sendMotor(MOTOR_HOME_SYNC)"),
+        )
         self.assertLess(
             calibrate.index("routeCalibrated = false"),
             calibrate.index("sendMotor(MOTOR_HOME_SYNC)"),

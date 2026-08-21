@@ -108,6 +108,9 @@ python simulide\validate_sim2.py
 - 실행 모드, 서버 PID와 시작 시간
 - 남은 오류의 가려진 로그
 
-하드웨어 상태는 서버 배포 상태와 별개다. 3 Uno · 2WD 차량의 HOME 보정, 라인
-주행, RFID, 액추에이터 부하는 각 단계의 OFF와 ACK를 확인하는 별도 감독 시험이
-필요하다.
+하드웨어 상태는 서버 배포 상태와 별개다. 3 Uno · 4모터 차량의 HOME 보정,
+M1~M4 전·후진과 축별 PWM 정합, 라인 주행, RFID, 후방 초음파 PAUSE,
+액추에이터 부하는 각 단계의 OFF와 ACK를 확인하는 별도 감독 시험이 필요하다.
+SensorUno와 MotorUno는 같은 commit으로 업로드하고, 부팅 status 8에서
+`PROTOCOL_SYNC(7)` exact ACK를 받은 뒤 status 7의 HOME 보정으로 진행한다.
+이 순서를 통과하지 못하면 구형/신형 혼용으로 간주하고 이동 시험을 중단한다.

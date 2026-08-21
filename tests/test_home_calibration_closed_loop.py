@@ -52,7 +52,9 @@ class BootSafeSensorSim:
     """
 
     motor: MotorUnoSim = field(
-        default_factory=lambda: MotorUnoSim(calibrated=False)
+        default_factory=lambda: MotorUnoSim(
+            calibrated=False, protocol_validated=False
+        )
     )
     actuator: ActuatorUnoSim = field(default_factory=ActuatorUnoSim)
     route_calibrated: bool = False
@@ -100,13 +102,24 @@ class BootSafeSensorSim:
 
     def _calibrate_home(self, now_ms: int) -> CommandOutcome:
         self.actuator.command(ActuatorCommand.STOP, now_ms)
+        protocol_sequence = self.motor.command(MotorCommand.PROTOCOL_SYNC, now_ms)
+        protocol_ack = self.motor.reply()
+        protocol_ready = protocol_ack == (
+            MotorStatus.PROTOCOL_REQUIRED,
+            MotorCommand.PROTOCOL_SYNC,
+            protocol_sequence,
+        )
         sequence = self.motor.command(MotorCommand.HOME_SYNC, now_ms)
         self.last_motor_ack = self.motor.reply()
         exact_ack = self.last_motor_ack[1:] == (
             MotorCommand.HOME_SYNC,
             sequence,
         )
-        succeeded = exact_ack and self.last_motor_ack[0] == MotorStatus.IDLE
+        succeeded = (
+            protocol_ready
+            and exact_ack
+            and self.last_motor_ack[0] == MotorStatus.IDLE
+        )
         if not succeeded:
             # HOME_SYNC is a verification command, never a search movement.
             # Its rejected frame is still exactly ACKed with status 7 while
@@ -203,14 +216,17 @@ class BootSafeSensorSim:
         self.event = "MODULE_COMPLETE"
 
     def motor_only_reboot(self) -> None:
-        self.motor = MotorUnoSim(calibrated=False)
+        self.motor = MotorUnoSim(calibrated=False, protocol_validated=False)
         self.last_motor_ack = self.motor.reply()
 
     def service_motor_link(self, now_ms: int) -> bool:
         """Model the 400 ms status poll made while SensorUno is moving."""
 
         status, _command, _sequence = self.motor.reply()
-        if status != MotorStatus.CALIBRATION_REQUIRED:
+        if status not in (
+            MotorStatus.CALIBRATION_REQUIRED,
+            MotorStatus.PROTOCOL_REQUIRED,
+        ):
             return True
         self._safe_stop(now_ms, invalidate_route=True)
         self.phase = "TASK_COMPLETE"
@@ -312,6 +328,22 @@ class HomeCalibrationClosedLoopTests(unittest.TestCase):
                 self.assertFalse(sensor.actuator.fan_on)
 
     def test_home_sync_requires_both_ir_high_and_exactly_acks_each_frame(self) -> None:
+        # A new MotorUno must stay released until the 4WD command semantics are
+        # explicitly synchronized; a legacy SensorUno cannot open calibration.
+        unsynchronized = MotorUnoSim(
+            calibrated=False, protocol_validated=False, home_marker_present=True
+        )
+        sequence = unsynchronized.command(MotorCommand.HOME_SYNC, 0)
+        self.assertEqual(
+            unsynchronized.reply(),
+            (
+                MotorStatus.PROTOCOL_REQUIRED,
+                MotorCommand.HOME_SYNC,
+                sequence,
+            ),
+        )
+        self.assertEqual(unsynchronized.active, MotorCommand.STOP)
+
         sensor = BootSafeSensorSim()
         for revision, levels in enumerate(
             ((False, False), (True, False), (False, True)), start=10
@@ -366,11 +398,11 @@ class HomeCalibrationClosedLoopTests(unittest.TestCase):
         self.assertTrue(sensor.at_station)
 
         # A later MotorUno reset returns the observed boot tuple from the
-        # physical test: status 7, STOP/seq0, calibrated false, no movement.
+        # Current boot contract: status 8, STOP/seq0, protocol/calibration locked.
         sensor.motor_only_reboot()
         self.assertEqual(
             sensor.motor.reply(),
-            (MotorStatus.CALIBRATION_REQUIRED, MotorCommand.STOP, 0),
+            (MotorStatus.PROTOCOL_REQUIRED, MotorCommand.STOP, 0),
         )
         self.assertFalse(sensor.motor.calibrated)
         self.assertEqual(sensor.motor.active, MotorCommand.STOP)
@@ -507,14 +539,14 @@ class HomeCalibrationClosedLoopTests(unittest.TestCase):
         )
         self.assertEqual(during.phase, "MOVING")
         during.motor_only_reboot()
-        self.assertEqual(during.motor.status, MotorStatus.CALIBRATION_REQUIRED)
+        self.assertEqual(during.motor.status, MotorStatus.PROTOCOL_REQUIRED)
         self.assertFalse(during.service_motor_link(500))
         self.assertFalse(during.route_calibrated)
         self.assertEqual(during.confirmed_station, "UNKNOWN")
         self.assertEqual(during.motor.active, MotorCommand.STOP)
 
         # If MotorUno reboots while SensorUno is stopped after a module run,
-        # status 7 is discovered on the next RETURN start and the stale route
+        # status 8 is discovered on the next RETURN start and the stale route
         # is invalidated instead of being reused.
         after = BootSafeSensorSim()
         after.set_home_ir(True, True)
@@ -553,7 +585,7 @@ class HomeCalibrationClosedLoopTests(unittest.TestCase):
         self.assertFalse(after.route_calibrated)
         self.assertEqual(after.confirmed_station, "UNKNOWN")
         self.assertEqual(after.expected_station, "UNKNOWN")
-        self.assertEqual(after.motor.status, MotorStatus.CALIBRATION_REQUIRED)
+        self.assertEqual(after.motor.status, MotorStatus.PROTOCOL_REQUIRED)
         self.assertEqual(after.motor.active, MotorCommand.STOP)
 
     def test_sensor_reboot_never_assumes_home_from_a_still_calibrated_motor(self) -> None:

@@ -228,9 +228,10 @@
                 <div class="control-group-title">MotorUno · 0x08</div>
                 <div class="control-row">
                   <button class="btn primary" data-command="MOTOR_FWD">라인 주행</button>
-                  <button class="btn warning" data-command="MOTOR_RETURN">복귀 회전</button>
+                  <button class="btn warning" data-command="MOTOR_RETURN" title="HOME 보정과 알려진 경로 위치가 필요합니다.">경로 복귀(후진)</button>
                   <button class="btn danger" data-command="MOTOR_STOP">모터 정지</button>
                 </div>
+                <div class="panel-note">복귀는 단순 벤치 역회전이 아닌 경로 명령입니다. 수동 전진 뒤에는 위치가 UNKNOWN이므로 HOME에서 다시 보정하세요.</div>
               </div>
               <div class="control-group">
                 <div class="control-group-title">ActuatorUno · 0x09</div>

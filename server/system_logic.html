@@ -472,7 +472,7 @@
             <p class="hero-copy">ZONE2와 ZONE99의 온·습도를 서버가 감시하고, 자동차의 SensorUno가 MotorUno·ActuatorUno를 조율해 이동, RFID 도착 확인, 가습 또는 제습, 복귀까지 수행하는 현재 설계를 한 페이지에 정리했습니다.</p>
             <div class="hero-meta">
               <span class="chip info"><i class="chip-dot"></i>3 × Arduino Uno R3</span>
-              <span class="chip info"><i class="chip-dot"></i>2WD · 좌/우 단일 모터</span>
+              <span class="chip info"><i class="chip-dot"></i>4모터 · 전진/후진 직선 왕복</span>
               <span class="chip ok"><i class="chip-dot"></i>오프라인 검사 명령 제공</span>
               <span class="chip warn"><i class="chip-dot"></i>하드웨어 통합 검증 필요</span>
             </div>
@@ -497,7 +497,7 @@
         <div class="notice-icon">⚠</div>
         <div>
           <strong>이 페이지는 안전 설계와 검증 절차를 설명하며, 연결된 장비의 현재 상태를 보증하지 않습니다.</strong>
-          <p>운영 소스는 부팅 시 경로 UNKNOWN·Motor status 7(CALIBRATION_REQUIRED)·액추에이터 출력 OFF를 기준으로 출발을 잠급니다. 펌웨어 업로드 여부, 보드별 포트, 실제 출력 상태는 시험을 시작할 때마다 현장에서 다시 확인하고 기록해야 합니다.</p>
+          <p>운영 소스는 부팅 시 경로 UNKNOWN·Motor status 8(PROTOCOL_REQUIRED)·액추에이터 출력 OFF로 잠깁니다. 같은 4모터 프로토콜의 exact ACK 뒤 status 7(CALIBRATION_REQUIRED)과 HOME 보정을 순서대로 통과해야 합니다.</p>
         </div>
       </div>
 
@@ -547,7 +547,7 @@
                 <article class="arch-node">
                   <span class="arch-label">0x08</span>
                   <h3>MotorUno</h3>
-                  <p>연속 검은 선 추종, 좌·우 단일 모터 2WD, 정지 명령과 로컬 watchdog</p>
+                  <p>연속 검은 선 추종, M1/M3 왼쪽·M2/M4 오른쪽 4모터 전진/후진, 정지 명령과 로컬 watchdog</p>
                 </article>
                 <article class="arch-node">
                   <span class="arch-label">0x09</span>
@@ -583,13 +583,13 @@
           <article class="flow-card"><h3>상시 센싱</h3><p>ZONE2·ZONE99 노드가 자동차 상태와 관계없이 온·습도를 계속 서버로 보냅니다.</p><span class="mini">DHT → ESP-01 → /api/readings</span></article>
           <article class="flow-card"><h3>이상 판정</h3><p>서버가 온도·습도와 45초 데이터 신선도를 확인합니다. 습도 위반 해제에는 2% hysteresis를 적용하고, 이상 후보가 없더라도 센서가 stale이면 ALL_STOP입니다.</p><span class="mini">NORMAL · ERROR_LOW · ERROR_HIGH · STALE</span></article>
           <article class="flow-card"><h3>목표 선정</h3><p>동시 위반이면 임계값 초과 폭과 지속시간으로 우선순위를 계산해 하나의 TASK와 revision을 만듭니다.</p><span class="mini">target_zone + action + revision</span></article>
-          <article class="flow-card"><h3>HOME 기준 동기화</h3><p>부팅 경로는 UNKNOWN입니다. HOME 마커에서 ZONE2 방향으로 놓고 CALIBRATE_HOME을 완료하기 전에는 TASK·RETURN·수동 주행을 실행하지 않습니다.</p><span class="mini">HOME_SYNC=6 · REQUIRED=7</span></article>
-          <article class="flow-card"><h3>출동 준비</h3><p>SensorUno가 RC522 VersionReg, I2C 적용 ACK와 경로 방향을 검사한 뒤 출발합니다. 초음파는 현재 모니터 전용입니다.</p><span class="mini">RFID health → Motor frame</span></article>
+          <article class="flow-card"><h3>프로토콜·HOME 동기화</h3><p>부팅 경로는 UNKNOWN입니다. 4모터 PROTOCOL_SYNC exact ACK 뒤 HOME 마커에서 ZONE2 방향으로 놓고 CALIBRATE_HOME을 완료하기 전에는 이동하지 않습니다.</p><span class="mini">SYNC=7 / STATUS=8 → HOME=6 / STATUS=7</span></article>
+          <article class="flow-card"><h3>출동 준비</h3><p>SensorUno가 RC522 VersionReg, I2C 적용 ACK와 경로 방향을 검사한 뒤 출발합니다. N20 쪽 후방 초음파는 전진을 차단하지 않습니다.</p><span class="mini">RFID health → Motor frame</span></article>
           <article class="flow-card"><h3>연속 라인 추종</h3><p>MotorUno는 IR 센서로 끊기지 않은 검은 선을 계속 따라갑니다. SensorUno는 주행 중 RFID 스캔·I2C ACK·keepalive를 우선 처리합니다.</p><span class="mini">LINE FOLLOW + RFID SCAN · 400ms KEEPALIVE</span></article>
           <article class="flow-card"><h3>RFID 감지·정지</h3><p>예상 역의 UID가 읽히면 SensorUno가 즉시 모터를 정지합니다. 중간 역이면 해당 UID를 중복 억제 상태로 두고 다시 출발하며, 목표 역이면 정차를 유지합니다.</p><span class="mini">RC522 UID → MOTOR STOP → STATION CONFIRM</span></article>
           <article class="flow-card"><h3>모듈 작동</h3><p>4바이트 sequence+CRC 명령을 보내고 같은 sequence의 RUNNING을 확인합니다. 가습 5초 또는 팬 0.5초→펠티어 5초→팬 2초 뒤 같은 tuple의 DONE만 인정합니다.</p><span class="mini">4B CONTROL ⇄ 6B EXACT ACK</span></article>
           <article class="flow-card"><h3>재판정</h3><p>모듈 완료 시 서버가 그 구역의 마지막 reading ID를 DB에 소비 처리하고 출력 OFF로 대기합니다. 그 이후 수신된 새 측정도 비정상일 때만 새 revision으로 한 번 더 작동하며, 정상화되면 RETURN_HOME을 만듭니다.</p><span class="mini">DB reading watermark · 새 측정 1건 = 다음 동작 1회</span></article>
-          <article class="flow-card"><h3>복귀·재라우팅</h3><p>HOME으로 복귀하는 중 새 TASK가 생기면 앞쪽 목표는 계속 가고, 뒤쪽 목표는 180도 회전합니다.</p><span class="mini">RETURNING 상태에서도 서버 감지 지속</span></article>
+          <article class="flow-card"><h3>복귀·재라우팅</h3><p>HOME으로 복귀할 때는 차체를 돌리지 않고 후진합니다. 이동 방향 반대편에 새 TASK가 생기면 잠시 전체 RELEASE 후 전진·후진 방향만 바꿉니다.</p><span class="mini">RETURNING 상태에서도 서버 감지 지속</span></article>
           <article class="flow-card"><h3>대기 복귀</h3><p>HOME 도착 후 IDLE로 전환하고 9초 HEARTBEAT만 유지합니다. 다음 위반을 기다립니다.</p><span class="mini">IDLE · outputs OFF · online 유지</span></article>
         </div>
       </section>
@@ -608,8 +608,8 @@
             </div>
             <div class="route-cases">
               <div class="route-case"><strong>HOME → ZONE99</strong><span>연속 검은 선을 추종하며 ZONE2 카드를 주행 중 읽습니다. 잠시 멈춰 중간 역을 기록한 뒤 같은 방향으로 재출발하고, ZONE99 카드에서 정지해 임무를 시작합니다.</span></div>
-              <div class="route-case"><strong>ZONE99 → HOME</strong><span>180도 회전 후 같은 검은 선을 따라갑니다. ZONE2 카드를 역방향 중간 지점으로 확인한 다음, 양쪽 IR이 HOME의 넓은 검은 종점 마커를 읽으면 정지합니다.</span></div>
-              <div class="route-case"><strong>복귀 중 TASK</strong><span>현재 진행 방향 앞쪽 목표면 그대로 진행하고, 이미 지나온 뒤쪽 목표면 180도 회전 후 재라우팅합니다.</span></div>
+              <div class="route-case"><strong>ZONE99 → HOME</strong><span>차체 자세를 유지한 채 네 바퀴를 후진시켜 같은 검은 선을 따라갑니다. ZONE2 카드를 중간 지점으로 확인한 다음, 양쪽 IR이 HOME의 넓은 검은 종점 마커를 읽으면 정지합니다.</span></div>
+              <div class="route-case"><strong>복귀 중 TASK</strong><span>현재 이동 방향 앞쪽 목표면 그대로 진행하고, 반대편 목표면 120ms 전체 RELEASE 후 네 바퀴의 전진·후진 방향을 바꿔 재라우팅합니다.</span></div>
             </div>
           </div>
           <aside class="panel panel-pad">
@@ -617,9 +617,9 @@
             <div class="route-rules">
               <div class="rule"><b>RFID가 구역을 확정</b><p>라인센서는 조향에만 사용합니다. RC522가 등록 UID를 읽었을 때만 ZONE2 또는 ZONE99 도착으로 확정합니다.</p></div>
               <div class="rule"><b>주행 중 반복 스캔</b><p>MOVING·RETURNING에서도 짧은 주기로 카드를 검사합니다. 예상 UID가 감지되면 정지 명령을 우선 전송합니다.</p></div>
-              <div class="rule"><b>중간 역은 재출발</b><p>목표가 아닌 예상 역이면 잠시 정지해 위치를 갱신하고 같은 방향으로 다시 출발합니다. 방금 처리한 UID에는 반복 인식 보호 시간을 적용하고, 180도 회전 중에는 RFID 판독을 보류합니다.</p></div>
+              <div class="rule"><b>중간 역은 재출발</b><p>목표가 아닌 예상 역이면 잠시 정지해 위치를 갱신하고 같은 전진·후진 방향으로 다시 출발합니다. 방향이 바뀐 직후에는 방금 처리한 카드가 안테나 범위에서 벗어난 것을 확인한 다음 RFID 판정을 재개합니다.</p></div>
               <div class="rule"><b>HOME만 검은 종점 마커</b><p>정상 복귀는 HOME 방향으로 ZONE2 RFID를 확인한 뒤 만나는 양쪽 IR 동시 검정에서 완료됩니다. ZONE2 태그를 놓쳐도 마커에서 정지해 HOME 위치는 복구하지만, 성공으로 처리하지 않고 <code>FAILED / HOME_RFID_MISSED</code>를 보고합니다. 향후 HOME RFID를 추가하면 위치 확인을 더 명확하게 만들 수 있습니다.</p></div>
-              <div class="rule"><b>재부팅 후 HOME 기준 동기화</b><p>부팅 위치는 UNKNOWN이고 MotorUno는 상태 7입니다. 차량을 HOME 종점에 놓고 ZONE2 방향을 보게 한 뒤 <code>CALIBRATE_HOME</code>을 실행해 명령 6·상태 0의 exact ACK를 받은 다음에만 AUTO로 복귀합니다. 양쪽 IR은 마커만 확인하므로 실제 차체 방향은 사용자가 맞춥니다.</p></div>
+              <div class="rule"><b>재부팅 후 버전·HOME 동기화</b><p>MotorUno는 부팅 상태 8에서 command 7 exact ACK로 4모터 의미를 확인한 뒤 상태 7로 이동합니다. 차량을 HOME에서 ZONE2 방향으로 놓고 명령 6·상태 0을 확인해야 AUTO로 복귀합니다. 구형/부분 업로드는 주행을 열지 않습니다.</p></div>
             </div>
           </aside>
         </div>
@@ -632,18 +632,18 @@
         </div>
         <div class="panel panel-pad">
           <div class="state-track">
-            <article class="state"><span>IDLE / UNCALIBRATED</span><h3>대기·출발 잠금</h3><p>부팅 직후는 UNKNOWN·status 7·출력 OFF. HOME calibration 뒤에만 HOME IDLE에서 TASK/RETURN_HOME 대기.</p></article>
-            <article class="state"><span>MOVING</span><h3>출동 이동</h3><p>MotorUno 주행, RFID와 I2C 상태, keepalive를 계속 감시. 초음파는 로그만 기록.</p></article>
+            <article class="state"><span>PROTOCOL / CALIBRATION REQUIRED</span><h3>대기·출발 잠금</h3><p>부팅 직후 UNKNOWN·status 8·출력 OFF. v2 sync 뒤 status 7, HOME calibration 뒤에만 IDLE에서 이동.</p></article>
+            <article class="state"><span>MOVING</span><h3>출동 이동</h3><p>MotorUno 전진, RFID와 I2C 상태, keepalive를 계속 감시. 후방 초음파는 전진 중 측정만 합니다.</p></article>
             <article class="state"><span>RFID_STOP · 목표</span><h3>역 확인·정지</h3><p>주행 중 읽은 RC522 UID와 expected station을 비교하고 MotorUno STOP을 확인.</p></article>
             <article class="state"><span>MODULE_RUNNING</span><h3>환경 제어</h3><p>가습 또는 제습 동작. RUNNING 이후 같은 명령의 DONE만 인정.</p></article>
             <article class="state"><span>TASK_COMPLETE</span><h3>결과 보고</h3><p>서버에 COMPLETED/FAILED와 이벤트를 전송하고 다음 명령 대기.</p></article>
             <article class="state"><span>RETURNING</span><h3>복귀</h3><p>HOME 방향 이동. 새 임무가 오면 현재 위치·방향으로 재라우팅.</p></article>
           </div>
           <div class="exception-row">
-            <div class="exception"><b>ULTRASONIC MONITOR</b><p>현재 데모에서는 거리값과 오류만 기록하며 출발 차단·장애물 PAUSE에는 사용하지 않음.</p></div>
+            <div class="exception"><b>REAR ULTRASONIC</b><p>전진은 관측만 합니다. 후진 출발 전 stale·STUCK_HIGH·15cm 미만 값은 출발을 거절하고, 주행 중 위험은 PAUSE합니다.</p></div>
             <div class="exception"><b>COMMUNICATION FAULT</b><p>I2C ACK, sequence, Wi-Fi 또는 서버 연결 실패 시 모터·액추에이터를 정지하고 FAILED 보고.</p></div>
             <div class="exception"><b>ROUTE DESYNC</b><p>예상하지 않은 등록 RFID, RFID 이후 잘못된 재출발 또는 주행 timeout은 임무 중단.</p></div>
-            <div class="exception"><b>CALIBRATION REQUIRED</b><p>부팅·Motor 재부팅 뒤 이동 명령은 status 7로 거절. 차량을 HOME에 회수해 ZONE2 방향으로 놓고 다시 동기화.</p></div>
+            <div class="exception"><b>SYNC REQUIRED</b><p>부팅·Motor 재부팅 뒤 status 8의 프로토콜 ACK와 status 7의 HOME 보정을 모두 다시 완료해야 합니다.</p></div>
           </div>
         </div>
       </section>
@@ -685,9 +685,9 @@
                 <thead><tr><th>핀 / 출력</th><th>연결</th><th>현재 역할 / 주의</th></tr></thead>
                 <tbody>
                   <tr><td class="pin">D9 / D10</td><td>왼쪽 / 오른쪽 IR</td><td>연속 검은 선 조향과 HOME 종점 마커 감지. 실제 HIGH/LOW 극성과 좌우 방향은 실차에서 확인.</td></tr>
-                  <tr><td class="pin">A4 / A5</td><td>I2C SDA / SCL</td><td>slave <code>0x08</code>, 2바이트 명령+sequence와 3바이트 적용 ACK. HOME_SYNC=6, CALIBRATION_REQUIRED=7.</td></tr>
-                  <tr><td class="pin">AFMotor M1</td><td>왼쪽 구동 모터 1개</td><td>2WD 왼쪽 바퀴. 방향과 속도는 펌웨어 설정 및 차체 시험으로 조정.</td></tr>
-                  <tr><td class="pin">AFMotor M2</td><td>오른쪽 구동 모터 1개</td><td>2WD 오른쪽 바퀴. 방향과 속도는 펌웨어 설정 및 차체 시험으로 조정.</td></tr>
+                  <tr><td class="pin">A4 / A5</td><td>I2C SDA / SCL</td><td>slave <code>0x08</code>, 2바이트 명령+sequence와 3바이트 적용 ACK. PROTOCOL_SYNC=7/status 8 뒤 HOME_SYNC=6/status 7, 이동은 versioned 0x11/0x12.</td></tr>
+                  <tr><td class="pin">AFMotor M1 / M3</td><td>왼쪽 기존 모터 + N20 1:298</td><td>두 채널은 같은 물리 방향. 기존축/N20축 PWM을 따로 조정.</td></tr>
+                  <tr><td class="pin">AFMotor M2 / M4</td><td>오른쪽 기존 모터 + N20 1:298</td><td>두 채널은 같은 물리 방향. 제자리 회전 없이 전진·후진.</td></tr>
                   <tr><td class="pin">Shield pins</td><td>D3/D4/D7/D8/D11/D12</td><td>AFMotor_R4 내부 점유. 외부 센서를 이 핀에 추가하지 않음.</td></tr>
                 </tbody>
               </table>
@@ -723,11 +723,11 @@
             <div class="panel-title"><h3>SensorUno가 처리하는 명령</h3><span class="panel-note">server → robot</span></div>
             <div class="command-grid">
               <div class="command"><code>TASK</code><p>target_zone과 HUMIDIFY/DEHUMIDIFY를 받아 경로 임무 시작</p></div>
-              <div class="command"><code>CALIBRATE_HOME</code><p>차량이 실제 HOME에 있고 ZONE2 방향을 향한 상태에서 Motor STOP을 먼저 확인하고 Actuator STOP까지 확인한 뒤 HOME_SYNC=6 실행. 양쪽 IR HIGH와 status 0 exact ACK로 위치 기준만 동기화하며 AUTO 전환은 별도</p></div>
+              <div class="command"><code>CALIBRATE_HOME</code><p>PROTOCOL_SYNC=7/status 8로 4모터 세대를 확인하고 두 출력 보드를 정지한 뒤 HOME_SYNC=6/status 0을 확인합니다. 실제 HOME·ZONE2 방향 배치는 사용자가 확인합니다.</p></div>
               <div class="command"><code>RETURN_HOME</code><p>현재 위치에서 HOME 경로 시작, 이미 HOME이면 즉시 완료</p></div>
               <div class="command"><code>ALL_STOP</code><p>모터와 모든 액추에이터를 즉시 OFF하고 IDLE 전환</p></div>
-              <div class="command"><code>MOTOR_FWD</code><p>현재 데모에서는 초음파 차단 없이 수동 라인 주행</p></div>
-              <div class="command"><code>MOTOR_RETURN</code><p>180도 회전 후 반대 방향 라인 주행</p></div>
+              <div class="command"><code>MOTOR_FWD</code><p>M1~M4 전진 수동 라인 주행. 경로 위치를 UNKNOWN으로 만들므로 이후 HOME 재보정 필요</p></div>
+              <div class="command"><code>MOTOR_RETURN</code><p>보정된 위치·RFID 경로를 사용해 차체를 돌리지 않고 HOME까지 후진; 임의 벤치 역회전이 아님</p></div>
               <div class="command"><code>MOTOR_STOP</code><p>MotorUno 정지와 로봇 상태 정리</p></div>
               <div class="command"><code>ACT_HUMIDIFY</code><p>ActuatorUno 가습 릴레이 단위 시험</p></div>
               <div class="command"><code>ACT_DEHUMID</code><p>팬 선가동·펠티어·팬 후열 냉각 순서 시험</p></div>
@@ -742,7 +742,7 @@
               <div class="api"><b>GET /api/robot/command</b><span>CALIBRATE_HOME을 포함해 revision, command, target_zone, action의 기존 4필드만 compact JSON으로 반환</span></div>
               <div class="api"><b>GET /api/robot/status</b><span>phase, event, zone, action, ack_revision, result 보고</span></div>
               <div class="api"><b>GET /api/dashboard</b><span>관제용 구역·임무·이력·장치 health 스냅샷</span></div>
-              <div class="api"><b>Sensor → Motor: [command, seq]</b><span>2바이트 프레임. 중복 tuple은 재회전 없이 멱등 처리</span></div>
+              <div class="api"><b>Sensor → Motor: [command, seq]</b><span>2바이트 프레임. 명령 1=전진, 2=후진이며 중복 tuple은 멱등 처리</span></div>
               <div class="api"><b>Motor → Sensor: [status, command, seq]</b><span>3바이트 적용 ACK. 오래된 상태를 새 명령 성공으로 오인하지 않음</span></div>
               <div class="api"><b>Sensor → Actuator: [0xA5, seq, command, CRC8]</b><span>A4/A5의 0x09 제어 경로. CRC-8/ATM(poly 0x07) 4바이트 프레임</span></div>
               <div class="api"><b>Actuator → Sensor: [status, command, appliedSeq, displaySeq, displayFlags, CRC8]</b><span>6바이트 exact ACK. 같은 command·sequence의 RUNNING을 본 뒤 그 tuple의 DONE만 인정</span></div>
@@ -758,15 +758,15 @@
           <p class="section-desc">서버가 느리거나 통신이 끊겨도 각 보드가 로컬에서 출력을 끌 수 있도록 계층별 방어를 둡니다.</p>
         </div>
         <div class="safety-grid">
-          <article class="safety"><div class="safety-icon">US</div><h3>초음파 모니터 전용</h3><p>현재 빌드는 센서값·ECHO 오류만 기록합니다. 출발 차단과 15cm 장애물 정지는 의도적으로 비활성입니다.</p></article>
-          <article class="safety"><div class="safety-icon">E!</div><h3>ECHO 오류 표시</h3><p>STUCK_HIGH·NO_ECHO·OUT_OF_RANGE를 로그로 구분하되 현재 주행 명령에는 반영하지 않습니다.</p></article>
+          <article class="safety"><div class="safety-icon">US</div><h3>후진 출발·장애물 보조 정지</h3><p>최신 sample이 없거나 STUCK_HIGH·15cm 미만이면 후진 출발을 거절합니다. 주행 중 같은 위험은 PAUSE하고 18cm 이상 3회 뒤 RESUME합니다.</p></article>
+          <article class="safety"><div class="safety-icon">E!</div><h3>ECHO 오류 구분</h3><p>STUCK_HIGH는 후진을 멈추지만 NO_ECHO·OUT_OF_RANGE는 넓은 공간일 수 있어 진단만 남깁니다. 이미 PAUSE 상태이면 다시 유효한 clear 3회 전에는 재개하지 않습니다.</p></article>
           <article class="safety"><div class="safety-icon">2s</div><h3>Motor watchdog</h3><p>SensorUno 명령 또는 KEEPALIVE가 2초간 없으면 MotorUno가 자체적으로 모든 모터를 RELEASE합니다.</p></article>
           <article class="safety"><div class="safety-icon">RF</div><h3>RFID 순서 검증</h3><p>현재 expected station과 다른 등록 UID는 경로 불일치로 처리해 주행과 모듈을 멈춥니다.</p></article>
           <article class="safety"><div class="safety-icon">I²C</div><h3>적용 ACK·timeout</h3><p>주소 ACK만 믿지 않습니다. Motor는 2B/3B sequence echo, Actuator는 4B/6B command+sequence+CRC를 확인하며 Wire timeout이면 전체 출력 OFF로 복구합니다.</p></article>
           <article class="safety"><div class="safety-icon">LCD</div><h3>표시 오류 격리</h3><p>D5/D4 LCD의 무응답·버스 고착·쓰기 실패는 표시 오류와 0x27→0x3F 재탐색으로 처리합니다. A4/A5의 릴레이 상태 머신과 안전 OFF는 독립적으로 유지합니다.</p></article>
           <article class="safety"><div class="safety-icon">TAG</div><h3>RFID 정지 우선</h3><p>등록 UID 감지 시 주행 명령보다 STOP을 우선하고 적용 ACK를 확인합니다. 태그가 사라지기 전에는 같은 역을 중복 처리하지 않습니다.</p></article>
           <article class="safety"><div class="safety-icon">HM</div><h3>HOME 마커 조건</h3><p>복귀 방향에서 ZONE2 RFID까지 확인한 뒤의 양쪽 IR 동시 검정만 정상 완료입니다. 중간 태그가 누락된 경우에도 마커에서 정지하고 위치를 HOME으로 복구하되, 누락 실패를 보고해 재점검하게 합니다.</p></article>
-          <article class="safety"><div class="safety-icon">CAL</div><h3>재부팅 출발 인터록</h3><p>재부팅 뒤 route=UNKNOWN·Motor status=7에서 이동을 막고, HOME 배치 후 CALIBRATE_HOME 완료 ACK가 있어야 해제합니다. IR은 차체 방향을 판별하지 못하므로 ZONE2 방향은 사용자가 확인합니다.</p></article>
+          <article class="safety"><div class="safety-icon">CAL</div><h3>재부팅 출발 인터록</h3><p>재부팅 뒤 route=UNKNOWN·Motor status=8에서 이동을 막습니다. PROTOCOL_SYNC exact ACK로 status 7에 진입한 뒤, HOME 배치와 CALIBRATE_HOME 완료 ACK가 있어야 해제합니다. IR은 차체 방향을 판별하지 못하므로 ZONE2 방향은 사용자가 확인합니다.</p></article>
           <article class="safety"><div class="safety-icon">5s</div><h3>액추에이터 자동 OFF</h3><p>가습 5초, 제습은 팬 0.5초 선가동·펠티어 5초·팬 2초 후열 냉각입니다. 부팅·STOP·I2C 오류는 모두 OFF입니다.</p></article>
           <article class="safety"><div class="safety-icon">NET</div><h3>서버 단절 대응</h3><p>진행 중 서버 연결이 끊기면 모터·액추에이터를 정지하고 복구 후 FAILED 이벤트를 보고합니다.</p></article>
         </div>
@@ -799,7 +799,7 @@
           <article class="verify-card">
             <h3>하드웨어 확인 항목</h3>
             <div class="check pending"><span class="check-mark">…</span><div><b>보드 식별·통신</b><small>현장에서 식별한 <code>&lt;SERIAL_PORT&gt;</code>를 보드별로 기록하고 Wi-Fi, Motor 0x08, Actuator 0x09의 응답과 안전 OFF를 확인합니다.</small></div></div>
-            <div class="check pending"><span class="check-mark">…</span><div><b>2WD 주행·역 인식</b><small>좌·우 단일 모터의 방향, IR 극성, 등록 태그 매핑, 카드 높이, 차속, 제동 거리, HOME 종점 정지를 바퀴 공중 시험부터 확인합니다.</small></div></div>
+            <div class="check pending"><span class="check-mark">…</span><div><b>4모터 전·후진·역 인식</b><small>M1~M4 개별 방향, 좌우 쌍, 축별 PWM, IR 극성, 등록 태그 매핑, 카드 높이, 차속, 제동 거리, 후방 장애물 PAUSE와 HOME 종점 정지를 바퀴 공중 시험부터 확인합니다.</small></div></div>
             <div class="check pending"><span class="check-mark">…</span><div><b>액추에이터 무부하·부하</b><small>LED·멀티미터 무부하 시험을 먼저 수행한 뒤 별도 전원과 보호회로를 확인하고 가습기·팬·펠티어 부하 시험으로 진행합니다.</small></div></div>
             <div class="check warn" style="margin-top:13px"><span class="check-mark">→</span><div><b>환경별 값을 외부 설정</b><small><code>&lt;SERVER_HOST&gt;</code>, <code>&lt;SERVER_PORT&gt;</code>, <code>&lt;SERIAL_PORT&gt;</code>, <code>&lt;ZONE_TAG_UID&gt;</code>와 자격 증명은 문서나 화면 소스에 실제 값으로 남기지 않습니다.</small></div></div>
           </article>
@@ -819,9 +819,9 @@
         </div>
         <div class="test-sequence">
           <article class="test-step"><span>STEP 01</span><b>전원·ESP 연결 확인</b><p>배선과 3.3V 전원을 확인한 뒤 ESP-01을 재인가하고 AT·Wi-Fi 응답을 기록.</p></article>
-          <article class="test-step"><span>STEP 02</span><b>서버 설정·안전 부팅</b><p><code>&lt;SERVER_HOST&gt;</code> 환경에 검증한 릴리스를 배포하고, Motor status 7/calibrated 0과 Actuator A0/A1/D7 OFF 및 ALL_STOP ACK를 확인.</p></article>
-          <article class="test-step"><span>STEP 03</span><b>HOME 기준 동기화</b><p>차량을 HOME 마커 위에서 ZONE2 방향으로 놓고 CALIBRATE_HOME → status 0/command 6 exact ACK와 HOME_CALIBRATED를 확인.</p></article>
-          <article class="test-step"><span>STEP 04</span><b>바퀴 공중·트랙 시험</b><p>IR 극성·등록 RFID 태그 매핑·연속선 조향·180도 회전·중간 역 재출발·HOME 종점 정지를 확인. 초음파는 로그만 관찰.</p></article>
+          <article class="test-step"><span>STEP 02</span><b>동일 릴리스·안전 부팅</b><p>Sensor/Motor/Actuator를 같은 커밋으로 업로드하고 Motor status 8, 모든 출력 OFF와 PROTOCOL_SYNC command 7 exact ACK를 확인합니다.</p></article>
+          <article class="test-step"><span>STEP 03</span><b>HOME 기준 동기화</b><p>차량을 HOME 마커 위에서 ZONE2 방향으로 놓고 CALIBRATE_HOME → status 7을 거쳐 status 0/command 6 exact ACK를 확인합니다.</p></article>
+          <article class="test-step"><span>STEP 04</span><b>바퀴 공중·트랙 시험</b><p>M1~M4 개별 방향, M1+M3/M2+M4 쌍, 전체 전진·후진, 축별 PWM 정합, 연속선 보정, RFID 중간 역과 HOME 정지를 확인합니다. 후방 초음파는 후진 장애물 PAUSE만 시험합니다.</p></article>
           <article class="test-step"><span>STEP 05</span><b>릴레이 무부하 시험</b><p>4B/6B exact ACK와 함께 LED·멀티미터로 A0 5초, D7 선가동→A1 5초→D7 후열 2초를 확인.</p></article>
           <article class="test-step"><span>STEP 06</span><b>전체 경로 시험</b><p>HOME→ZONE2→ZONE99→HOME, 중간 역과 복귀 중 새 TASK를 순서대로 검증.</p></article>
         </div>
