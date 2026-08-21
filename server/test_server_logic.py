@@ -1449,6 +1449,8 @@ class ServerLogicTests(unittest.TestCase):
             captured["payload"]["features"],
         )
         self.assertIn("global-command-revisions", captured["payload"]["features"])
+        self.assertIn("mobile-control-app", captured["payload"]["features"])
+        self.assertIn("http-auth-rejection-close", captured["payload"]["features"])
 
     def test_readiness_endpoint_reports_database_state(self) -> None:
         handler = object.__new__(server.Handler)
@@ -1534,6 +1536,41 @@ class ServerLogicTests(unittest.TestCase):
                     "Bearer team-secret",
                 )
             )
+
+    def test_rejected_remote_control_closes_connection_with_unread_body(self) -> None:
+        """A rejected POST body must not corrupt the next HTTP/1.1 request."""
+        body = b'{"mode":"MANUAL","command":"ALL_STOP"}'
+        handler = object.__new__(server.Handler)
+        handler.path = "/api/control"
+        handler.client_address = ("192.0.2.10", 12345)
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+        handler.close_connection = False
+        captured: dict = {}
+        handler.send_json = lambda status, payload: captured.update(
+            status=status,
+            payload=payload,
+        )
+
+        with patch.object(server, "CONTROL_API_TOKEN", "team-secret"):
+            handler.do_POST()
+
+        self.assertEqual(captured["status"], server.HTTPStatus.FORBIDDEN)
+        self.assertTrue(handler.close_connection)
+        self.assertEqual(handler.rfile.tell(), 0)
+
+    def test_json_response_advertises_connection_close(self) -> None:
+        handler = object.__new__(server.Handler)
+        handler.close_connection = True
+        handler.wfile = io.BytesIO()
+        headers: dict[str, str] = {}
+        handler.send_response = lambda status: None
+        handler.send_header = lambda name, value: headers.update({name: value})
+        handler.end_headers = lambda: None
+
+        handler.send_json(server.HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+
+        self.assertEqual(headers["Connection"], "close")
 
     def test_legacy_port_does_not_expose_dashboard_or_control_routes(self) -> None:
         handler = object.__new__(server.LegacyHandler)

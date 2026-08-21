@@ -34,7 +34,7 @@ except ImportError:  # 서버는 pyserial 없이도 네트워크 관제를 계�
 
 HOST = os.getenv("ROBOT_BIND_HOST", "127.0.0.1")
 PORT = int(os.getenv("ROBOT_PORT", "8000"))
-SERVER_BUILD_ID = "2026-08-21-repository-hardening-v1"
+SERVER_BUILD_ID = "2026-08-21-mobile-app-v2"
 AVR_REVISION_MAX = 2_147_483_647
 # 기존 ESP-01 매뉴얼과 호환하기 위한 보조 포트입니다.
 # 새 코드는 8000/api/readings, 기존 센서 코드는 3000/api/humidity를 씁니다.
@@ -2353,6 +2353,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(data)
 
@@ -2400,6 +2402,8 @@ class Handler(BaseHTTPRequestHandler):
                         "global-command-revisions",
                         "humidity-hysteresis",
                         "stale-all-stop",
+                        "mobile-control-app",
+                        "http-auth-rejection-close",
                     ],
                 },
             )
@@ -2472,6 +2476,10 @@ class Handler(BaseHTTPRequestHandler):
             client_ip,
             self.headers.get("Authorization"),
         ):
+            # The authorization check intentionally happens before reading the
+            # request body.  Close this HTTP/1.1 connection so unread JSON is
+            # never parsed as the method of the browser's next request.
+            self.close_connection = True
             self.send_json(
                 HTTPStatus.FORBIDDEN,
                 {
