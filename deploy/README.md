@@ -40,3 +40,10 @@ Git에서 재현 가능한 변경 범위와 현장 시험 순서는
 기록합니다. 로컬에서 만든 ZIP과 `.sha256`은 저장소에 커밋하지 않으며, 실제
 전달이 필요할 때만 같은 릴리스 저장소에 한 쌍으로 게시합니다. clean clone에
 없는 로컬 압축 파일을 문서의 필수 입력으로 간주하지 않습니다.
+
+## 3-Uno 주변기기 분배 인계 메모
+
+DHT22를 ActuatorUno D2로, 뒤쪽 HC-SR04를 MotorUno D2/A1로 이전한 최신
+역할·배선·업로드 순서는
+[`HANDOFF_DISTRIBUTED_PERIPHERALS_2026-08-21.md`](HANDOFF_DISTRIBUTED_PERIPHERALS_2026-08-21.md)에
+기록합니다. 이 문서가 기존 4WD 메모의 SensorUno DHT/HC 배선을 대체합니다.

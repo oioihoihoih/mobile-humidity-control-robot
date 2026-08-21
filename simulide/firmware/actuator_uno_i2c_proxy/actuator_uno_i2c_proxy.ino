@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <DHT.h>
 #include <Wire.h>
 
 // SimulIDE용 ActuatorUno 프록시 펌웨어.
@@ -38,8 +39,6 @@ constexpr byte DISPLAY_STATE_DEHUMIDIFY = 3;
 constexpr byte DISPLAY_STATE_DONE = 4;
 constexpr byte DISPLAY_STATE_RETURNING = 5;
 constexpr byte DISPLAY_STATE_ERROR = 6;
-constexpr byte DISPLAY_INPUT_DHT_VALID = 0x01;
-
 constexpr byte DISPLAY_STATUS_VALID = 0x01;
 constexpr byte DISPLAY_STATUS_LCD_READY = 0x02;
 constexpr byte DISPLAY_STATUS_LCD_ERROR = 0x04;
@@ -48,6 +47,9 @@ constexpr byte DISPLAY_STATUS_STALE = 0x08;
 constexpr byte HUMIDIFIER_LED = A0;
 constexpr byte PELTIER_LED = A1;
 constexpr byte FAN_LED = 7;
+constexpr byte DHT_PIN = 2;
+constexpr byte DHT_TYPE = DHT22;
+DHT dht(DHT_PIN, DHT_TYPE);
 
 constexpr byte LCD_SOFT_SDA_PIN = 5;
 constexpr byte LCD_SOFT_SCL_PIN = 4;
@@ -61,6 +63,7 @@ constexpr unsigned long TASK_DURATION_MS = 5000;
 constexpr unsigned long FAN_PRESTART_MS = 500;
 constexpr unsigned long FAN_COOLDOWN_MS = 2000;
 constexpr unsigned long DISPLAY_STALE_MS = 30000;
+constexpr unsigned long DHT_READ_MS = 3000;
 constexpr unsigned long LCD_RETRY_MS = 5000;
 constexpr unsigned long SOFT_I2C_TIMEOUT_US = 1000;
 constexpr unsigned int SOFT_I2C_HALF_PERIOD_US = 5;
@@ -89,13 +92,16 @@ unsigned long stageStartedAt = 0;
 byte lastDisplaySequence = 0;
 byte displayState = DISPLAY_STATE_IDLE;
 byte displayZone = 0;
-int16_t displayTemperatureTenths = 0;
-uint16_t displayHumidityTenths = 0;
 byte displayInputFlags = 0;
 bool displayFrameValid = false;
-bool displayDhtValid = false;
 bool displayStale = true;
 unsigned long lastDisplayAt = 0;
+
+int16_t localTemperatureTenths = 0;
+uint16_t localHumidityTenths = 0;
+bool localDhtSampleSeen = false;
+bool localDhtValid = false;
+unsigned long lastDhtReadAt = 0;
 
 bool lcdReady = false;
 bool lcdError = false;
@@ -453,22 +459,22 @@ void setLine(byte row, const char* text) {
 
 void formatLcdLines() {
   char line[17];
-  if (displayStale) {
-    setLine(0, "TELEMETRY STALE");
-  } else if (!displayDhtValid) {
+  if (!localDhtSampleSeen) {
+    setLine(0, "DHT22 STARTING");
+  } else if (!localDhtValid) {
     setLine(0, "DHT22 ERROR");
   } else {
-    const long temperature = displayTemperatureTenths;
+    const long temperature = localTemperatureTenths;
     const unsigned int absoluteTemperature = static_cast<unsigned int>(
         temperature < 0 ? -temperature : temperature);
     if (temperature < 0) {
       snprintf_P(line, sizeof(line), PSTR("T-%u.%uC H%u.%u%%"),
                  absoluteTemperature / 10, absoluteTemperature % 10,
-                 displayHumidityTenths / 10, displayHumidityTenths % 10);
+                 localHumidityTenths / 10, localHumidityTenths % 10);
     } else {
       snprintf_P(line, sizeof(line), PSTR("T%u.%uC H%u.%u%%"),
                  absoluteTemperature / 10, absoluteTemperature % 10,
-                 displayHumidityTenths / 10, displayHumidityTenths % 10);
+                 localHumidityTenths / 10, localHumidityTenths % 10);
     }
     setLine(0, line);
   }
@@ -508,12 +514,10 @@ void serviceDisplayMailbox(unsigned long now) {
 
   const byte state = frame[2];
   const byte zone = frame[3];
-  const uint16_t humidity = static_cast<uint16_t>(frame[6]) |
-                            (static_cast<uint16_t>(frame[7]) << 8);
   const bool zoneValid = zone == 0 || zone == 2 || zone == 99 || zone == 0xFF;
   if (frame[0] != DISPLAY_FRAME_MAGIC ||
       crc8Atm(frame, 9) != frame[9] ||
-      state > DISPLAY_STATE_ERROR || !zoneValid || humidity > 1000) {
+      state > DISPLAY_STATE_ERROR || !zoneValid) {
     Serial.println(F("[DISPLAY] invalid 10-byte frame discarded; relays unchanged"));
     return;
   }
@@ -521,12 +525,9 @@ void serviceDisplayMailbox(unsigned long now) {
   lastDisplaySequence = frame[1];
   displayState = state;
   displayZone = zone;
-  displayTemperatureTenths = static_cast<int16_t>(
-      static_cast<uint16_t>(frame[4]) |
-      (static_cast<uint16_t>(frame[5]) << 8));
-  displayHumidityTenths = humidity;
+  // frame[4..7]은 기존 10바이트 wire 계약을 유지하는 예약 필드다.
+  // LCD 온·습도는 ActuatorUno D2의 로컬 DHT22만 사용한다.
   displayInputFlags = frame[8];
-  displayDhtValid = (displayInputFlags & DISPLAY_INPUT_DHT_VALID) != 0;
   displayFrameValid = true;
   displayStale = false;
   lastDisplayAt = now;
@@ -551,6 +552,31 @@ void serviceDisplayStale(unsigned long now) {
   scheduleLcdRender();
   rebuildDisplayStatusFlags();
   Serial.println(F("[DISPLAY] STALE >30s"));
+}
+
+void serviceLocalDht(unsigned long now) {
+  if (localDhtSampleSeen && now - lastDhtReadAt < DHT_READ_MS) return;
+  lastDhtReadAt = now;
+
+  const float humidity = dht.readHumidity();
+  const float temperature = dht.readTemperature();
+  localDhtSampleSeen = true;
+  localDhtValid = !isnan(humidity) && !isnan(temperature) &&
+                  humidity >= 0.0f && humidity <= 100.0f;
+  if (!localDhtValid) {
+    Serial.println(F("[DHT22] ActuatorUno D2 read error; relays unchanged"));
+  } else {
+    localTemperatureTenths = static_cast<int16_t>(
+        temperature * 10.0f + (temperature >= 0.0f ? 0.5f : -0.5f));
+    localHumidityTenths = static_cast<uint16_t>(humidity * 10.0f + 0.5f);
+    Serial.print(F("[DHT22] ActuatorUno D2 T="));
+    Serial.print(temperature, 1);
+    Serial.print(F("C H="));
+    Serial.print(humidity, 1);
+    Serial.println(F("%"));
+  }
+  formatLcdLines();
+  scheduleLcdRender();
 }
 
 void serviceLcd(unsigned long now) {
@@ -602,6 +628,7 @@ void serviceLcd(unsigned long now) {
 
 void setup() {
   Serial.begin(9600);
+  dht.begin();
   pinMode(HUMIDIFIER_LED, OUTPUT);
   pinMode(PELTIER_LED, OUTPUT);
   pinMode(FAN_LED, OUTPUT);
@@ -618,6 +645,7 @@ void setup() {
   Wire.onRequest(sendStatus);
   Serial.println(F("ActuatorUno proxy ready: A4/A5 slave=0x09"));
   Serial.println(F("Control: A5/seq/cmd/CRC 4B; status logical 6B"));
+  Serial.println(F("DHT22 proxy: local DATA=D2; LCD first row uses local sample"));
   Serial.println(F("LCD proxy: D5=SDA D4=SCL, PCF8574=0x27, D1/10B display"));
 }
 
@@ -628,5 +656,10 @@ void loop() {
   serviceTask(now);
   serviceDisplayMailbox(now);
   serviceDisplayStale(now);
-  serviceLcd(now);
+  // 로컬 DHT 전후로 릴레이 명령/만료를 처리해 센서 읽기 시간을 안전 OFF에
+  // 누적시키지 않는다.
+  serviceLocalDht(now);
+  serviceCommand();
+  serviceTask(millis());
+  serviceLcd(millis());
 }

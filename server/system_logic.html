@@ -540,24 +540,24 @@
               <article class="arch-node primary">
                 <span class="arch-label">Robot coordinator</span>
                 <h3>SensorUno</h3>
-                <p>ESP-01, 초음파, RC522, DHT22, 경로 상태와 I2C 마스터를 담당하고, LCD용 10바이트 온·습도/상태 telemetry를 만듭니다.</p>
+                <p>ESP-01, RC522, 경로 상태와 I2C 마스터를 담당합니다. 10바이트 표시 telemetry에는 상태·구역·flags와 예약 필드만 담습니다.</p>
                 <span class="address">Wi-Fi ⇄ Server · I2C master</span>
               </article>
               <div class="branch">
                 <article class="arch-node">
                   <span class="arch-label">0x08</span>
                   <h3>MotorUno</h3>
-                  <p>연속 검은 선 추종, M1/M3 왼쪽·M2/M4 오른쪽 4모터 전진/후진, 정지 명령과 로컬 watchdog</p>
+                  <p>연속 검은 선 추종, 4모터 전진/후진, 로컬 watchdog과 D2/A1 후방 HC-SR04 안전 정지</p>
                 </article>
                 <article class="arch-node">
                   <span class="arch-label">0x09</span>
                   <h3>ActuatorUno</h3>
-                  <p>가습·펠티어·팬 릴레이와 LCD 표시. 릴레이 안전 제어와 LCD 오류를 분리</p>
+                  <p>D2 DHT22 로컬 측정, 가습·펠티어·팬 릴레이와 LCD 표시. 센서·표시 오류를 릴레이 안전 제어와 분리</p>
                 </article>
                 <article class="arch-node">
                   <span class="arch-label">D5/D4 · 0x27 → 0x3F</span>
                   <h3>LCD1602</h3>
-                  <p>ActuatorUno의 별도 software I2C에서 자동차 DHT22 값, 현재 단계와 목표 구역 표시</p>
+                  <p>ActuatorUno D2의 로컬 DHT22 값과 SensorUno가 보낸 현재 단계·목표 구역 표시</p>
                 </article>
               </div>
             </div>
@@ -584,7 +584,7 @@
           <article class="flow-card"><h3>이상 판정</h3><p>서버가 온도·습도와 45초 데이터 신선도를 확인합니다. 습도 위반 해제에는 2% hysteresis를 적용하고, 이상 후보가 없더라도 센서가 stale이면 ALL_STOP입니다.</p><span class="mini">NORMAL · ERROR_LOW · ERROR_HIGH · STALE</span></article>
           <article class="flow-card"><h3>목표 선정</h3><p>동시 위반이면 임계값 초과 폭과 지속시간으로 우선순위를 계산해 하나의 TASK와 revision을 만듭니다.</p><span class="mini">target_zone + action + revision</span></article>
           <article class="flow-card"><h3>프로토콜·HOME 동기화</h3><p>부팅 경로는 UNKNOWN입니다. 4모터 PROTOCOL_SYNC exact ACK 뒤 HOME 마커에서 ZONE2 방향으로 놓고 CALIBRATE_HOME을 완료하기 전에는 이동하지 않습니다.</p><span class="mini">SYNC=7 / STATUS=8 → HOME=6 / STATUS=7</span></article>
-          <article class="flow-card"><h3>출동 준비</h3><p>SensorUno가 RC522 VersionReg, I2C 적용 ACK와 경로 방향을 검사한 뒤 출발합니다. N20 쪽 후방 초음파는 전진을 차단하지 않습니다.</p><span class="mini">RFID health → Motor frame</span></article>
+          <article class="flow-card"><h3>출동 준비</h3><p>SensorUno가 RC522 VersionReg, I2C 적용 ACK와 경로 방향을 검사한 뒤 출발합니다. MotorUno의 N20 쪽 후방 초음파는 전진을 차단하지 않습니다.</p><span class="mini">RFID health → Motor frame</span></article>
           <article class="flow-card"><h3>연속 라인 추종</h3><p>MotorUno는 IR 센서로 끊기지 않은 검은 선을 계속 따라갑니다. SensorUno는 주행 중 RFID 스캔·I2C ACK·keepalive를 우선 처리합니다.</p><span class="mini">LINE FOLLOW + RFID SCAN · 400ms KEEPALIVE</span></article>
           <article class="flow-card"><h3>RFID 감지·정지</h3><p>예상 역의 UID가 읽히면 SensorUno가 즉시 모터를 정지합니다. 중간 역이면 해당 UID를 중복 억제 상태로 두고 다시 출발하며, 목표 역이면 정차를 유지합니다.</p><span class="mini">RC522 UID → MOTOR STOP → STATION CONFIRM</span></article>
           <article class="flow-card"><h3>모듈 작동</h3><p>4바이트 sequence+CRC 명령을 보내고 같은 sequence의 RUNNING을 확인합니다. 가습 5초 또는 팬 0.5초→펠티어 5초→팬 2초 뒤 같은 tuple의 DONE만 인정합니다.</p><span class="mini">4B CONTROL ⇄ 6B EXACT ACK</span></article>
@@ -633,14 +633,14 @@
         <div class="panel panel-pad">
           <div class="state-track">
             <article class="state"><span>PROTOCOL / CALIBRATION REQUIRED</span><h3>대기·출발 잠금</h3><p>부팅 직후 UNKNOWN·status 8·출력 OFF. v2 sync 뒤 status 7, HOME calibration 뒤에만 IDLE에서 이동.</p></article>
-            <article class="state"><span>MOVING</span><h3>출동 이동</h3><p>MotorUno 전진, RFID와 I2C 상태, keepalive를 계속 감시. 후방 초음파는 전진 중 측정만 합니다.</p></article>
+            <article class="state"><span>MOVING</span><h3>출동 이동</h3><p>MotorUno 전진, RFID와 I2C 상태, keepalive를 계속 감시. 후방 초음파는 전진 모터 상태에 관여하지 않습니다.</p></article>
             <article class="state"><span>RFID_STOP · 목표</span><h3>역 확인·정지</h3><p>주행 중 읽은 RC522 UID와 expected station을 비교하고 MotorUno STOP을 확인.</p></article>
             <article class="state"><span>MODULE_RUNNING</span><h3>환경 제어</h3><p>가습 또는 제습 동작. RUNNING 이후 같은 명령의 DONE만 인정.</p></article>
             <article class="state"><span>TASK_COMPLETE</span><h3>결과 보고</h3><p>서버에 COMPLETED/FAILED와 이벤트를 전송하고 다음 명령 대기.</p></article>
             <article class="state"><span>RETURNING</span><h3>복귀</h3><p>HOME 방향 이동. 새 임무가 오면 현재 위치·방향으로 재라우팅.</p></article>
           </div>
           <div class="exception-row">
-            <div class="exception"><b>REAR ULTRASONIC</b><p>전진은 관측만 합니다. 후진 출발 전 stale·STUCK_HIGH·15cm 미만 값은 출발을 거절하고, 주행 중 위험은 PAUSE합니다.</p></div>
+            <div class="exception"><b>REAR ULTRASONIC</b><p>MotorUno가 후진 중 15cm 미만·STUCK_HIGH를 로컬 PAUSE하고 18cm 이상 유효값 3회에서만 재개합니다. 출발 전 sample gate는 없으며 NO_ECHO·OUT_OF_RANGE는 진단만 남깁니다.</p></div>
             <div class="exception"><b>COMMUNICATION FAULT</b><p>I2C ACK, sequence, Wi-Fi 또는 서버 연결 실패 시 모터·액추에이터를 정지하고 FAILED 보고.</p></div>
             <div class="exception"><b>ROUTE DESYNC</b><p>예상하지 않은 등록 RFID, RFID 이후 잘못된 재출발 또는 주행 timeout은 임무 중단.</p></div>
             <div class="exception"><b>SYNC REQUIRED</b><p>부팅·Motor 재부팅 뒤 status 8의 프로토콜 ACK와 status 7의 HOME 보정을 모두 다시 완료해야 합니다.</p></div>
@@ -665,9 +665,7 @@
               <table>
                 <thead><tr><th>핀</th><th>연결</th><th>현재 역할 / 주의</th></tr></thead>
                 <tbody>
-                  <tr><td class="pin">D2</td><td>HC-SR04 ECHO</td><td>INT0 비차단 edge 측정</td></tr>
-                  <tr><td class="pin">D3</td><td>HC-SR04 TRIG</td><td>주기적 10µs trigger</td></tr>
-                  <tr><td class="pin">D4</td><td>DHT22 DATA</td><td>자동차 온·습도 측정 후 10바이트 표시 telemetry 생성</td></tr>
+                  <tr><td class="pin">D2 / D3 / D4</td><td>예비</td><td>자원 분배 뒤 SensorUno에는 연결하지 않음</td></tr>
                   <tr><td class="pin">D5</td><td>UNO TX → ESP-01 RX</td><td>ESP 입력은 반드시 3.3V 레벨 분압</td></tr>
                   <tr><td class="pin">D6</td><td>UNO RX ← ESP-01 TX</td><td><code>SoftwareSerial(6, 5)</code></td></tr>
                   <tr><td class="pin">D8 / D9</td><td>RC522 SDA(SS) / SCK</td><td rowspan="3">비표준 핀맵이라 프로젝트 내 software-SPI 드라이버 사용. RC522 전원은 3.3V.</td></tr>
@@ -684,6 +682,8 @@
               <table>
                 <thead><tr><th>핀 / 출력</th><th>연결</th><th>현재 역할 / 주의</th></tr></thead>
                 <tbody>
+                  <tr><td class="pin">D2</td><td>HC-SR04 ECHO</td><td>INT0 비차단 edge 측정, 후진 중 로컬 정지</td></tr>
+                  <tr><td class="pin">A1</td><td>HC-SR04 TRIG</td><td>AFMotor가 점유한 D3 대신 사용</td></tr>
                   <tr><td class="pin">D9 / D10</td><td>왼쪽 / 오른쪽 IR</td><td>연속 검은 선 조향과 HOME 종점 마커 감지. 실제 HIGH/LOW 극성과 좌우 방향은 실차에서 확인.</td></tr>
                   <tr><td class="pin">A4 / A5</td><td>I2C SDA / SCL</td><td>slave <code>0x08</code>, 2바이트 명령+sequence와 3바이트 적용 ACK. PROTOCOL_SYNC=7/status 8 뒤 HOME_SYNC=6/status 7, 이동은 versioned 0x11/0x12.</td></tr>
                   <tr><td class="pin">AFMotor M1 / M3</td><td>왼쪽 기존 모터 + N20 1:298</td><td>두 채널은 같은 물리 방향. 기존축/N20축 PWM을 따로 조정.</td></tr>
@@ -699,6 +699,7 @@
               <table>
                 <thead><tr><th>핀</th><th>연결</th><th>현재 역할 / 주의</th></tr></thead>
                 <tbody>
+                  <tr><td class="pin">D2</td><td>DHT22 DATA</td><td>자동차 온·습도 로컬 측정, LCD 첫 줄 표시</td></tr>
                   <tr><td class="pin">A0</td><td>가습기 릴레이 IN</td><td>HUMIDIFY에서 5초 ON</td></tr>
                   <tr><td class="pin">A1</td><td>펠티어 릴레이 IN</td><td>팬 선가동 0.5초 뒤 5초 ON</td></tr>
                   <tr><td class="pin">D4</td><td>LCD1602 SCL</td><td rowspan="2">LCD 전용 software I2C. <code>0x27</code>을 먼저 찾고 응답이 없으면 <code>0x3F</code> 탐색. A4/A5와 연결하지 않음.</td></tr>
@@ -742,11 +743,11 @@
               <div class="api"><b>GET /api/robot/command</b><span>CALIBRATE_HOME을 포함해 revision, command, target_zone, action의 기존 4필드만 compact JSON으로 반환</span></div>
               <div class="api"><b>GET /api/robot/status</b><span>phase, event, zone, action, ack_revision, result 보고</span></div>
               <div class="api"><b>GET /api/dashboard</b><span>관제용 구역·임무·이력·장치 health 스냅샷</span></div>
-              <div class="api"><b>Sensor → Motor: [command, seq]</b><span>2바이트 프레임. 명령 1=전진, 2=후진이며 중복 tuple은 멱등 처리</span></div>
+              <div class="api"><b>Sensor → Motor: [command, seq]</b><span>2바이트 프레임. 0x11=전진, 0x12=직선 후진이며 중복 tuple은 멱등 처리</span></div>
               <div class="api"><b>Motor → Sensor: [status, command, seq]</b><span>3바이트 적용 ACK. 오래된 상태를 새 명령 성공으로 오인하지 않음</span></div>
               <div class="api"><b>Sensor → Actuator: [0xA5, seq, command, CRC8]</b><span>A4/A5의 0x09 제어 경로. CRC-8/ATM(poly 0x07) 4바이트 프레임</span></div>
               <div class="api"><b>Actuator → Sensor: [status, command, appliedSeq, displaySeq, displayFlags, CRC8]</b><span>6바이트 exact ACK. 같은 command·sequence의 RUNNING을 본 뒤 그 tuple의 DONE만 인정</span></div>
-              <div class="api"><b>Sensor → Actuator: 10B display telemetry</b><span>자동차 온도·습도·상태를 고정 프레임으로 전달. Actuator가 D5/D4 LCD에 표시</span></div>
+              <div class="api"><b>Sensor → Actuator: 10B display telemetry</b><span>상태·구역·flags와 0인 예약 4바이트를 전달. Actuator가 D2 DHT22를 직접 읽어 D5/D4 LCD에 합쳐 표시</span></div>
             </div>
           </article>
         </div>

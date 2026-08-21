@@ -9,9 +9,9 @@ Windows COM 번호, Wi-Fi 자격 증명, RFID UID는 환경별 값이므로 저�
 | 장치 | 책임 | 연결 |
 | --- | --- | --- |
 | 서버 PC | ZONE2/ZONE99 측정 저장, 임계값·우선순위 판정, 명령과 웹 UI | `<SERVER_HOST>:<SERVER_PORT>` |
-| SensorUno | ESP-01, RC522, DHT22, 후방 초음파, 경로 상태, 하위 보드 조율 | Wi-Fi + I2C master |
-| MotorUno | 기존 모터 M1/M2 + N20 1:298 M3/M4, 2채널 라인센서, HOME 동기화, watchdog | I2C slave `0x08` |
-| ActuatorUno | 가습·펠티어·팬 릴레이, LCD1602 | I2C slave `0x09` + LCD 전용 software I2C |
+| SensorUno | ESP-01, RC522, 경로 상태, 하위 보드 조율 | Wi-Fi + I2C master |
+| MotorUno | 기존 모터 M1/M2 + N20 1:298 M3/M4, 2채널 라인센서, 후방 HC-SR04, HOME 동기화, watchdog | I2C slave `0x08` |
+| ActuatorUno | DHT22 로컬 측정, 가습·펠티어·팬 릴레이, LCD1602 | I2C slave `0x09` + LCD 전용 software I2C |
 | 구역 센서 노드 | 구역별 DHT11/22 측정 전송 | ESP-01 Wi-Fi |
 
 서버는 Arduino가 아니라 별도 컴퓨터에서 실행한다. 자동차와 구역 센서 노드는
@@ -26,9 +26,7 @@ USB 시리얼 포트 이름은 연결 순서와 컴퓨터에 따라 바뀐다. �
 
 | 핀 | 연결 |
 | --- | --- |
-| D2 | HC-SR04 ECHO |
-| D3 | HC-SR04 TRIG |
-| D4 | DHT22 DATA |
+| D2/D3/D4 | 예비; 현재 운영 역할 없음 |
 | D5 | UNO TX → ESP-01 RX, 3.3V 레벨 변환 필수 |
 | D6 | UNO RX ← ESP-01 TX |
 | D8 | RC522 SDA/SS |
@@ -42,13 +40,6 @@ RC522는 이 비표준 핀맵에 맞춘 프로젝트의 software-SPI 드라이�
 RC522와 ESP-01은 3.3V 장치다. 특히 ESP-01은 송신 순간 전류를 감당할 수 있는
 안정된 3.3V 전원과 공통 GND가 필요하다.
 
-HC-SR04 본체는 N20 후륜 쪽을 향하게 장착하지만 신호선은 계속 SensorUno의
-D2/D3에 연결한다. MotorUno의 D3는 M2 PWM이므로 초음파를 MotorUno D2/D3로
-옮기면 충돌한다. 후방 센서는 전진 중에는 측정만 한다. 후진 출발 전 완료
-sample이 stale/미준비이거나 `STUCK_HIGH`, 유효 거리 15cm 미만이면 출발하지
-않는다. 주행 중에는 15cm 미만 또는 `STUCK_HIGH`에서 PAUSE하고 18cm 이상을
-3회 확인해야 재개한다. `NO_ECHO`와 `OUT_OF_RANGE`는 진단만 남긴다.
-
 RFID 매핑은 배포마다 로컬에서 읽은 값을 사용한다.
 
 ```text
@@ -59,9 +50,9 @@ ZONE99 → <ZONE99_TAG_UID>
 UID를 README, 화면 캡처, 로그 예시나 공개 이슈에 기록하지 않는다. SensorUno는
 구역명과 상태만 서버에 보고한다.
 
-SensorUno는 자동차 DHT22 값과 상태를 고정 10바이트 telemetry로
-ActuatorUno에 보낸다. LCD 오류는 표시 오류로만 다루고, 모터나 릴레이의 안전
-정지 판단과 분리한다.
+SensorUno는 상태·구역·플래그를 고정 10바이트 telemetry로
+ActuatorUno에 보낸다. 기존 온·습도 4바이트는 wire 호환을 위해 0인
+예약 필드로 남긴다. 실제 자동차 온·습도는 ActuatorUno가 직접 읽는다.
 
 부팅 때 위치와 다음 역은 `UNKNOWN`, 경로 보정은 false다. 차량을 HOME의 넓은
 검은 마커 위에서 ZONE2 방향으로 놓고 `CALIBRATE_HOME`을 완료하기 전에는
@@ -72,6 +63,8 @@ TASK, RETURN_HOME, 수동 주행을 거절한다. HOME 동기화는 마커만 �
 
 | 핀/출력 | 연결 |
 | --- | --- |
+| D2 | HC-SR04 ECHO, INT0 |
+| A1 | HC-SR04 TRIG |
 | D9/D10 | 왼쪽/오른쪽 IR 라인센서 |
 | A4/A5 | I2C SDA/SCL, slave `0x08` |
 | AFMotor M1 | 기존 앞쪽 왼쪽 모터 |
@@ -95,7 +88,7 @@ MotorUno는 SensorUno의 주기적 KEEPALIVE가 끊기면 네 모터를 RELEASE�
 판정 뒤 STOP 적용 ACK로 확정한다. `BENCH_RFID_ONLY_MODE`는 진단 전용이며
 운영 빌드에서는 false여야 한다.
 
-명령 1은 네 바퀴 전진, 명령 2는 차체를 180도 돌리지 않는 네 바퀴 후진이다.
+명령 `0x11`은 네 바퀴 전진, 명령 `0x12`는 차체를 180도 돌리지 않는 네 바퀴 후진이다.
 진행 방향을 바꿀 때는 모든 채널을 잠시 RELEASE한 뒤 반대 방향을 적용한다.
 라인 보정도 한쪽 바퀴를 반대 방향으로 돌리지 않고 같은 진행 방향에서 한쪽
 PWM만 낮춘다. 후진에서는 차체 반대편에 있는 라인센서의 조향 효과를 고려해
@@ -107,10 +100,19 @@ SensorUno가 `PROTOCOL_SYNC(7)`의 같은 command/sequence와 status 8을 확인
 주행 없이 양쪽 IR이 HOME 마커 조건인지 확인한다. versioned 이동 명령
 `0x11/0x12`는 구형 값 `1/2`와 분리되어 혼합 펌웨어의 이동을 거절한다.
 
+HC-SR04는 N20 후륜 쪽을 향하게 장착하고 `ECHO=D2`, `TRIG=A1`로
+배선한다. AFMotor shield가 점유하는 D3를 TRIG로 사용하지 않는다.
+MotorUno는 후진 중에만 로컬 안전 로직을 활성화한다. 15cm 미만이거나
+ECHO가 HIGH로 고정되면 즉시 네 모터를 RELEASE하고 status 2를
+반환한다. 18cm 이상 유효값 3회 연속에서만 로컬 래치를 풀고,
+SensorUno가 별도로 건 PAUSE는 임의로 해제하지 않는다. `NO_ECHO`·
+`OUT_OF_RANGE`는 진단만 남긴다.
+
 ## ActuatorUno
 
 | 핀 | 연결 | 동작 |
 | --- | --- | --- |
+| D2 | DHT22 DATA | 자동차 온·습도 로컬 측정 |
 | A0 | 가습기 릴레이 IN | HUMIDIFY |
 | A1 | 펠티어 릴레이 IN | DEHUMIDIFY |
 | D7 | 냉각팬 릴레이 IN | 펠티어 전후 냉각 |
@@ -125,6 +127,8 @@ A0/A1/D7을 모두 OFF로 둔다. 가습은 제한 시간 뒤 자동 종료한�
 LCD는 ActuatorUno의 D5/D4 전용 버스에만 연결한다. 세 Uno의 A4/A5 제어
 버스와 합치지 않는다. 기본 주소와 대체 주소 탐색은 표시 편의를 위한 기능이며,
 LCD 실패가 릴레이 상태 머신을 우회하게 해서는 안 된다.
+DHT22 읽기 실패도 LCD 첫 줄에만 오류로 표시하고 진행 중인
+릴레이 시퀀스나 안전 OFF를 변경하지 않는다.
 
 ## 제어 프로토콜
 
@@ -133,8 +137,8 @@ LCD 실패가 릴레이 상태 머신을 우회하게 해서는 안 된다.
 - Motor 상태: `[status, appliedCommand, appliedSequence]`
 - Actuator 명령: `[0xA5, sequence, command, CRC8]`
 - Actuator 상태: `[status, command, appliedSequence, displaySequence, flags, CRC8]`
-- LCD telemetry: magic, sequence, 상태, 구역, 온도, 습도, flags, CRC를 담은
-  고정 10바이트 프레임
+- LCD telemetry: magic, sequence, 상태, 구역, 예약 4바이트, flags, CRC를
+  담은 고정 10바이트 프레임; 온·습도는 ActuatorUno D2에서 직접 측정
 - CRC: CRC-8/ATM, 다항식 `0x07`
 
 SensorUno는 현재 command와 sequence가 모두 일치하는 RUNNING을 본 뒤 같은

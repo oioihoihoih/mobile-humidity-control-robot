@@ -1,6 +1,11 @@
 #include <Arduino.h>
 #include <DHT.h>
 
+// LEGACY 벤치 전용: DHT22/HC-SR04를 한 Uno의 D4/D2/D3에 임시로 꽂아
+// 센서 자체만 확인하던 스케치다. 최신 3-Uno 운영 배선에서는 DHT22가
+// ActuatorUno D2, HC-SR04가 MotorUno D2/A1에 있으므로 production 대신
+// 이 파일을 업로드하거나 이 핀맵을 운영 배선으로 사용하지 않는다.
+
 constexpr byte DHT_PIN = 4;
 constexpr byte ECHO_PIN = 2;
 constexpr byte TRIG_PIN = 3;
@@ -74,6 +79,7 @@ void setup() {
   digitalWrite(TRIG_PIN, LOW);
   dht22.begin();
   Serial.println();
+  Serial.println(F("[LEGACY BENCH ONLY] not the distributed production pin map"));
   Serial.println(F("=== D4 DHT / D2-D3 HC-SR04 DIAGNOSTIC ==="));
   Serial.println(F("[WIRING] HC-SR04 ECHO->D2 TRIG->D3; all grounds must be common"));
   Serial.println(F("[EXPECT] ECHO must be LOW before each trigger"));

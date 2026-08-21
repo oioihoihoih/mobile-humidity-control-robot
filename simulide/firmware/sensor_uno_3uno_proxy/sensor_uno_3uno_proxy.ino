@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <DHT.h>
 #include <Wire.h>
 
 // SimulIDE용 SensorUno 프록시 펌웨어
@@ -51,6 +50,8 @@ constexpr byte STATUS_BYTE_SELECT_BASE = 0xF0;
 constexpr byte STATUS_REPLY_SIZE = 6;
 
 // 운영 SensorUno -> ActuatorUno LCD telemetry 프로토콜과 같은 값이다.
+// 온·습도 4바이트는 wire 호환용 예약 필드이며 항상 0이다.
+// ActuatorUno가 D2의 DHT22를 직접 읽어 LCD 첫 줄을 만든다.
 constexpr byte DISPLAY_FRAME_MAGIC = 0xD1;
 constexpr byte DISPLAY_FRAME_SIZE = 10;
 constexpr byte DISPLAY_STATE_IDLE = 0;
@@ -60,20 +61,13 @@ constexpr byte DISPLAY_STATE_DEHUMIDIFY = 3;
 constexpr byte DISPLAY_STATE_DONE = 4;
 constexpr byte DISPLAY_STATE_RETURNING = 5;
 constexpr byte DISPLAY_STATE_ERROR = 6;
-constexpr byte DISPLAY_FLAG_DHT_VALID = 0x01;
 constexpr byte DISPLAY_FLAG_SERVER_READY = 0x02;
 constexpr byte DISPLAY_FLAG_TASK_ACTIVE = 0x04;
 constexpr byte DISPLAY_FLAG_FAULT = 0x08;
 constexpr byte DISPLAY_STATUS_VALID = 0x01;
 
-// 실제 차량 DHT22는 운영 배선과 같은 D4에 연결한다. 이 값은 LCD 대신
-// SensorUno 시리얼 로그에 출력하며 서버 구역 임무 판정에는 사용하지 않는다.
-constexpr byte DHT_PIN = 4;
-constexpr byte DHT_TYPE = DHT22;
-DHT dht(DHT_PIN, DHT_TYPE);
-
 // 서버 명령 프록시 버튼. 실제 ESP-01 대신 쓰는 시뮬레이션 전용 입력이며,
-// A0~A3은 운영 SensorUno에서 비어 있으므로 DHT/RC522/I2C 핀을 침범하지 않는다.
+// A0~A3은 운영 SensorUno에서 비어 있으므로 RC522/I2C 핀을 침범하지 않는다.
 constexpr byte TASK_ZONE2_HUMIDIFY_PIN = A0;
 constexpr byte TASK_ZONE2_DEHUMIDIFY_PIN = A1;
 constexpr byte TASK_ZONE99_HUMIDIFY_PIN = A2;
@@ -92,7 +86,6 @@ constexpr byte HOME_MARKER_PIN = 13;
 constexpr unsigned long KEEPALIVE_MS = 400;
 constexpr unsigned long ACTUATOR_POLL_MS = 100;
 constexpr unsigned long STATUS_LOG_MS = 1000;
-constexpr unsigned long DHT_LOG_MS = 2500;
 constexpr unsigned long DISPLAY_HEARTBEAT_MS = 2000;
 constexpr unsigned long DISPLAY_RETRY_MS = 500;
 constexpr unsigned long DISPLAY_ACK_DELAY_MS = 40;
@@ -147,11 +140,6 @@ byte lastActuatorSequence = 0;
 unsigned long lastKeepaliveAt = 0;
 unsigned long lastActuatorPollAt = 0;
 unsigned long lastStatusLogAt = 0;
-unsigned long lastDhtLogAt = 0;
-
-float carTemperature = NAN;
-float carHumidity = NAN;
-bool carDhtValid = false;
 byte displayPayloadCache[7] = {0};
 bool displayPayloadCached = false;
 byte displaySequence = 0;
@@ -235,20 +223,12 @@ void buildDisplayPayload(byte* payload) {
   payload[0] = displayStateForMode();
   payload[1] = displayZoneCode();
 
-  int16_t temperatureTenths = 0;
-  uint16_t humidityTenths = 0;
-  if (carDhtValid) {
-    temperatureTenths = static_cast<int16_t>(
-        carTemperature * 10.0f + (carTemperature >= 0 ? 0.5f : -0.5f));
-    humidityTenths = static_cast<uint16_t>(carHumidity * 10.0f + 0.5f);
-  }
-  payload[2] = static_cast<byte>(temperatureTenths & 0xFF);
-  payload[3] = static_cast<byte>((temperatureTenths >> 8) & 0xFF);
-  payload[4] = static_cast<byte>(humidityTenths & 0xFF);
-  payload[5] = static_cast<byte>((humidityTenths >> 8) & 0xFF);
+  payload[2] = 0;
+  payload[3] = 0;
+  payload[4] = 0;
+  payload[5] = 0;
 
   byte flags = DISPLAY_FLAG_SERVER_READY;
-  if (carDhtValid) flags |= DISPLAY_FLAG_DHT_VALID;
   if (mode == MOVING_OUTBOUND || mode == TASK_RUNNING ||
       mode == WAIT_SERVER_NORMAL || mode == RETURNING_HOME) {
     flags |= DISPLAY_FLAG_TASK_ACTIVE;
@@ -570,7 +550,7 @@ void arriveAt(Station station) {
     }
     sendMotor(MOTOR_STOP);
     currentStation = ZONE2;
-    // RFID 확인용 STOP 뒤에도 차체 방향을 바꾸지 않는다. 복귀 명령 2를
+    // RFID 확인용 STOP 뒤에도 차체 방향을 바꾸지 않는다. 복귀 명령 0x12를
     // 다시 보내 네 바퀴가 같은 직선 후진 방향으로 HOME까지 계속 간다.
     if (!sendMotor(MOTOR_REVERSE_HOME)) {
       stopEverything(F("reverse-home resume failed at ZONE2"));
@@ -758,30 +738,10 @@ void printStatus() {
   Serial.println(lastActuatorCommand);
 }
 
-void printCarDht(unsigned long now) {
-  if (now - lastDhtLogAt < DHT_LOG_MS) return;
-  lastDhtLogAt = now;
-  carHumidity = dht.readHumidity();
-  carTemperature = dht.readTemperature();
-  carDhtValid = !isnan(carHumidity) && !isnan(carTemperature) &&
-                carHumidity >= 0.0f && carHumidity <= 100.0f;
-  Serial.print(F("[CAR DHT22 D4] "));
-  if (!carDhtValid) {
-    Serial.println(F("READ ERROR"));
-    return;
-  }
-  Serial.print(F("T="));
-  Serial.print(carTemperature, 1);
-  Serial.print(F("C H="));
-  Serial.print(carHumidity, 1);
-  Serial.println(F("%"));
-}
-
 void setup() {
   // 운영 SensorUno와 같은 115200bps를 사용해 I2C/RFID 경로 로그가
   // 송신 버퍼를 오래 점유하거나 SimulIDE 터미널에서 섞이지 않게 한다.
   Serial.begin(115200);
-  dht.begin();
   for (byte i = 0; i < BUTTON_COUNT; ++i) pinMode(buttons[i].pin, INPUT_PULLUP);
 
   Wire.begin();
@@ -799,8 +759,9 @@ void setup() {
 
   Serial.println(F("SensorUno 3-Uno proxy ready"));
   Serial.println(F("Route: HOME -> ZONE2 -> ZONE99"));
-  Serial.println(F("Motor: command 1=FORWARD, 2=straight REVERSE_HOME; no U-turn"));
+  Serial.println(F("Motor: command 0x11=FORWARD, 0x12=REVERSE_HOME; no U-turn"));
   Serial.println(F("I2C: Motor=0x08 Actuator=0x09, A5 control + D1 display"));
+  Serial.println(F("Sensors: DHT22=ActuatorUno D2, HC-SR04=MotorUno local"));
   Serial.println(F("CALIBRATION REQUIRED: HOME marker + h/D13; motor stays OFF"));
   Serial.println(F("Serial: h=CALIBRATE/HOME, 2/3=Z2 H/D, 9/0=Z99 H/D, z/x=RFID, r=RETURN, a=STOP"));
 }
@@ -809,7 +770,6 @@ void loop() {
   const unsigned long now = millis();
   serviceButtons(now);
   serviceSerialProxy();
-  printCarDht(now);
   serviceDisplayTelemetry(now);
 
   if ((mode == MOVING_OUTBOUND || mode == RETURNING_HOME) &&

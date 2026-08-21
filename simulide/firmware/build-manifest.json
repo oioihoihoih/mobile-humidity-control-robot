@@ -5,21 +5,21 @@
   "artifacts": {
     "Uno-1": {
       "source": "sensor_uno_3uno_proxy/sensor_uno_3uno_proxy.ino",
-      "source_sha256": "191e4767d77e2cbc28c2999d8b213d7a6a5d1925939d21757bf1160f05268d8d",
+      "source_sha256": "bf984e77488d7582219ca7fb15bc803fc1d8bd9980076400b6cfcf3a94d6e312",
       "hex": "sensor_uno_3uno_proxy/sensor_uno_3uno_proxy.ino.hex",
-      "hex_sha256": "8935b9ddabc29b0d81dea782c3d8c166980c89289ec2054a7a8857ee4e1075bb"
+      "hex_sha256": "01f1f376262aa065ab3ecab2a568670ae1b9183e9b7344ee63a379be67517f99"
     },
     "Uno-2": {
       "source": "motor_uno_i2c_proxy/motor_uno_i2c_proxy.ino",
-      "source_sha256": "ace54d3758f03e64f66ec5ef0b421b45d7e651dbdd3f72ba86ad18f5f7512190",
+      "source_sha256": "64bd5bd036326ffc2aa5c5c0cb1dd4bf7d5a57b0cf0d5d1153d2281c2332580c",
       "hex": "motor_uno_i2c_proxy/motor_uno_i2c_proxy.ino.hex",
-      "hex_sha256": "2a26090feaf998588d7eb8fc7f35c244c675e86752c39381f41d596bb14aec43"
+      "hex_sha256": "0e9db3d712660053029cf84bf6050a3e6439812dea7286a1b641c050bf786797"
     },
     "Uno-3": {
       "source": "actuator_uno_i2c_proxy/actuator_uno_i2c_proxy.ino",
-      "source_sha256": "ca5308b40417d8ad976288fff7b472fb7907b1e41572de4cacea8445e0165a5f",
+      "source_sha256": "9306fb6b14f08a79820dd85ce2cdb402c949f5b04af9b3c84452c9c6b7a7e6c3",
       "hex": "actuator_uno_i2c_proxy/actuator_uno_i2c_proxy.ino.hex",
-      "hex_sha256": "2a7df2deadbe5b6ffe620d74d9189b36b1b2fd4ea2bc203aa02089a76fd65a5b"
+      "hex_sha256": "b273126451c464f30bfe5452b72df23786f3aebdcfe9b2bd03cf88612efd9bec"
     }
   }
 }

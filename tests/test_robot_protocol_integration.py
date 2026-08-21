@@ -1018,6 +1018,80 @@ class StatusReportDeliverySim:
 
 
 @dataclass
+class EspHttpResponseCollectorSim:
+    """Streaming contract for SensorUno's small ESP-01 response buffer.
+
+    ESP-AT can prepend ``SEND OK``/``+IPD`` framing and append ``CLOSED``.
+    SensorUno therefore scans the header as a stream, discards it when the
+    JSON object starts, and only accepts a complete object.  A SoftwareSerial
+    overflow makes the transcript untrustworthy even if the surviving bytes
+    happen to contain a plausible HTTP status or JSON fragment.
+    """
+
+    buffer_size: int = 128
+    payload: str = ""
+    http_response_started: bool = False
+    http_ok: bool = False
+    body_started: bool = False
+    body_complete: bool = False
+    overflowed: bool = False
+    storage_truncated: bool = False
+
+    def collect(
+        self, transcript: str, *, software_serial_overflow: bool = False
+    ) -> bool:
+        self.payload = ""
+        self.http_response_started = False
+        self.http_ok = False
+        self.body_started = False
+        self.body_complete = False
+        self.overflowed = software_serial_overflow
+        self.storage_truncated = False
+        header_tail = ""
+
+        if self.overflowed:
+            return False
+
+        for character in transcript:
+            if not self.body_started:
+                # A rolling window prevents a long header from consuming the
+                # 128-byte JSON buffer.  It is also sufficient for either
+                # supported HTTP status-line spelling.
+                header_tail = (header_tail + character)[-32:]
+                if "HTTP/1." in header_tail:
+                    self.http_response_started = True
+                if "HTTP/1.0 200" in header_tail or "HTTP/1.1 200" in header_tail:
+                    self.http_ok = True
+                if character != "{" or not self.http_response_started:
+                    continue
+                self.body_started = True
+
+            if self.body_complete:
+                # ESP-AT's trailing CRLF/CLOSED belongs to framing, not JSON.
+                continue
+            if len(self.payload) < self.buffer_size - 1:
+                self.payload += character
+            else:
+                # The application buffer may retain only the response prefix;
+                # this is distinct from SoftwareSerial's ISR-ring overflow.
+                # Status ACK puts ack_revision in that retained prefix.
+                self.storage_truncated = True
+            if character == "}":
+                self.body_complete = True
+
+        return (
+            self.http_ok
+            and self.body_started
+            and self.body_complete
+            and not self.overflowed
+        )
+
+    def extract_json_long(self, key: str) -> int | None:
+        match = re.search(rf'"{re.escape(key)}":\s*(\d+)', self.payload)
+        return int(match.group(1)) if match else None
+
+
+@dataclass
 class FailedStopRecoverySim:
     """Local 500ms STOP retry latch independent of server revisions."""
 
@@ -2433,6 +2507,84 @@ class IntegrationProtocolTests(unittest.TestCase):
         self.assertEqual(robot.action, "HUMIDIFY")
 
 
+class EspHttpResponseCollectorTests(unittest.TestCase):
+    BODY = (
+        '{"revision":1787186401,"command":"ALL_STOP",'
+        '"target_zone":"HOME","action":"NONE"}'
+    )
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        # This reproduces the observed response shape: a header too large for
+        # espBuffer followed by the 81-byte command JSON that does fit.
+        header_prefix = (
+            "HTTP/1.0 200 OK\r\n"
+            "Server: humidity-test\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: 81\r\n"
+            "Connection: close\r\n"
+            "X-Pad: "
+        )
+        header_suffix = "\r\n\r\n"
+        pad_length = 160 - len(header_prefix) - len(header_suffix)
+        cls.header = header_prefix + ("H" * pad_length) + header_suffix
+
+        cls.ipd_prefix = "SEND OK\r\n\r\n+IPD,241:"
+        cls.closed_suffix = "\r\nCLOSED\r\n"
+        cls.transcript = cls.ipd_prefix + cls.header + cls.BODY + cls.closed_suffix
+
+        assert pad_length >= 0
+        assert len(cls.header.encode("ascii")) == 160
+        assert len(cls.BODY.encode("ascii")) == 81
+        assert len((cls.header + cls.BODY).encode("ascii")) == 241
+
+    def test_long_header_exact_body_and_esp_at_framing_parse_revision(self) -> None:
+        collector = EspHttpResponseCollectorSim()
+
+        self.assertTrue(collector.collect(self.transcript))
+        self.assertTrue(collector.http_ok)
+        self.assertTrue(collector.body_started)
+        self.assertTrue(collector.body_complete)
+        self.assertFalse(collector.overflowed)
+        self.assertEqual(collector.payload, self.BODY)
+        self.assertEqual(collector.extract_json_long("revision"), 1787186401)
+
+    def test_header_only_truncated_body_and_missing_opener_are_rejected(self) -> None:
+        malformed = {
+            "header only": self.ipd_prefix + self.header + self.closed_suffix,
+            "truncated body": self.ipd_prefix + self.header + self.BODY[:-1],
+            "missing opener": self.ipd_prefix + self.header + self.BODY[1:],
+        }
+        for label, transcript in malformed.items():
+            with self.subTest(label=label):
+                collector = EspHttpResponseCollectorSim()
+                self.assertFalse(collector.collect(transcript))
+
+    def test_software_serial_overflow_invalidates_an_otherwise_valid_response(self) -> None:
+        collector = EspHttpResponseCollectorSim()
+
+        self.assertFalse(
+            collector.collect(self.transcript, software_serial_overflow=True)
+        )
+        self.assertTrue(collector.overflowed)
+        self.assertIsNone(collector.extract_json_long("revision"))
+
+    def test_long_status_body_can_complete_after_storage_prefix_is_full(self) -> None:
+        body = (
+            '{"accepted":true,"ack_revision":1787186401,'
+            '"phase":"TASK_COMPLETE","event":"MODULE_COMPLETE",'
+            '"result":"COMPLETED","ack_accepted":true,'
+            '"ack_rejection":null}'
+        )
+        transcript = self.ipd_prefix + self.header + body + self.closed_suffix
+        collector = EspHttpResponseCollectorSim()
+
+        self.assertTrue(collector.collect(transcript))
+        self.assertTrue(collector.storage_truncated)
+        self.assertTrue(collector.body_complete)
+        self.assertEqual(collector.extract_json_long("ack_revision"), 1787186401)
+
+
 class FirmwareSourceContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -2457,12 +2609,19 @@ class FirmwareSourceContractTests(unittest.TestCase):
             r"RFID_MOSI_PIN\s*=\s*10",
             r"RFID_MISO_PIN\s*=\s*11",
             r"RFID_RST_PIN\s*=\s*12",
-            r"DHT_PIN\s*=\s*4",
-            r"DHT_TYPE\s*=\s*DHT22",
-            r"ULTRASONIC_ECHO_PIN\s*=\s*2",
-            r"ULTRASONIC_TRIG_PIN\s*=\s*3",
         ):
             self.assert_source(self.sensor, pattern)
+        for removed_sensor_peripheral in (
+            "#include <DHT.h>",
+            "DHT_PIN",
+            "ULTRASONIC_ECHO_PIN",
+            "ULTRASONIC_TRIG_PIN",
+        ):
+            self.assertNotIn(removed_sensor_peripheral, self.sensor)
+        self.assert_source(self.actuator, r"DHT_PIN\s*=\s*2")
+        self.assert_source(self.actuator, r"DHT_TYPE\s*=\s*DHT22")
+        self.assert_source(self.motor, r"ULTRASONIC_ECHO_PIN\s*=\s*2")
+        self.assert_source(self.motor, r"ULTRASONIC_TRIG_PIN\s*=\s*A1")
         self.assertIn('#define ROBOT_SERVER_HOST "192.0.2.10"', self.network)
         self.assertIn('#define ROBOT_ZONE2_UID "AA BB CC DD"', self.network)
         self.assertIn('#define ROBOT_ZONE99_UID "11 22 33 44"', self.network)
@@ -2606,6 +2765,39 @@ class FirmwareSourceContractTests(unittest.TestCase):
             + " HTTP/1.0\r\n\r\n"
         )
         self.assertLess(len(worst), 180)
+
+    def test_http_collector_requires_complete_json_and_rejects_uart_overflow(self) -> None:
+        collect_start = self.sensor.index("bool collectHttpResponse()")
+        collect_end = self.sensor.index("bool fetchCommandResponse()", collect_start)
+        body = self.sensor[collect_start:collect_end]
+
+        # HTTP 200 only proves that a response began.  The command parser may
+        # run only after both JSON delimiters survived SoftwareSerial.
+        self.assertRegex(body, r"bool\s+bodyComplete\s*=\s*false\s*;")
+        self.assertRegex(body, r"bool\s+headersComplete\s*=\s*false\s*;")
+        self.assertRegex(
+            body,
+            r"else\s+if\s*\(\s*c\s*==\s*'\{'\s*\)\s*\{"
+            r"[\s\S]{0,300}?bodyStarted\s*=\s*true\s*;",
+        )
+        self.assertRegex(body, r"c\s*==\s*'\}'")
+        self.assertRegex(body, r"bodyComplete\s*=\s*true\s*;")
+
+        # SoftwareSerial's 64-byte ISR ring buffer has an explicit sticky
+        # overflow flag.  A response assembled after dropped bytes must fail,
+        # even when its remaining suffix happens to look like valid JSON.
+        self.assertIn("esp8266.overflow()", body)
+        self.assertRegex(
+            body,
+            r"if\s*\(\s*esp8266\.overflow\(\)\s*\)\s*\{?"
+            r"[\s\S]{0,300}?return\s+false\s*;",
+        )
+
+        returns = re.findall(r"return\s+([^;]+);", body)
+        self.assertTrue(returns)
+        final_return = returns[-1]
+        for required_proof in ("httpOk", "bodyStarted", "bodyComplete"):
+            self.assertIn(required_proof, final_return)
 
     def test_every_raw_stop_failure_arms_the_local_retry_latch(self) -> None:
         motor_start = self.sensor.index("bool stopMotorController()")
@@ -2783,19 +2975,17 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assertIn("faultStatus == MOTOR_STATUS_UNEXPECTED_MARKER", self.sensor)
         self.assert_source(self.sensor, r"MOTOR_KEEPALIVE_MS\s*=\s*400")
         self.assert_source(self.sensor, r"WIFI_RECONNECT_INTERVAL_MS\s*=\s*15000")
-        self.assert_source(self.sensor, r"ULTRASONIC_MIN_VALID_CM\s*=\s*2")
-        self.assert_source(self.sensor, r"ULTRASONIC_MAX_VALID_CM\s*=\s*400")
-        self.assert_source(self.sensor, r"ULTRASONIC_VALID_STREAK_REQUIRED\s*=\s*3")
-        self.assertIn("attachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN)", self.sensor)
-        self.assertIn("onUltrasonicEchoChange", self.sensor)
-        self.assertIn("ULTRASONIC_SAMPLE_STUCK_HIGH", self.sensor)
+        self.assert_source(self.motor, r"ULTRASONIC_MIN_CM\s*=\s*2")
+        self.assert_source(self.motor, r"ULTRASONIC_MAX_CM\s*=\s*400")
+        self.assert_source(self.motor, r"ULTRASONIC_CLEAR_STREAK_REQUIRED\s*=\s*3")
+        self.assertIn("attachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN)", self.motor)
+        self.assertIn("captureUltrasonicEcho", self.motor)
+        self.assertIn("ULTRASONIC_SAMPLE_STUCK_HIGH", self.motor)
         self.assertIn(
-            'F("[BOOT] NO_ECHO=diagnostic; STUCK_HIGH=reverse stop")',
-            self.sensor,
+            'F("[BOOT] STUCK_HIGH stops reverse; NO_ECHO is diagnostic")',
+            self.motor,
         )
-        self.assertNotIn("pulseIn(ULTRASONIC_ECHO_PIN", self.sensor)
-        self.assertIn("FAULT=ECHO_STUCK_HIGH_BEFORE_TRIGGER", self.sensor_diagnostic)
-        self.assertIn("FAULT=NO_ECHO_RISE", self.sensor_diagnostic)
+        self.assertNotIn("pulseIn(ULTRASONIC_ECHO_PIN", self.motor)
         self.assertIn("millis() - lastWifiReconnectAttemptAt >= WIFI_RECONNECT_INTERVAL_MS", self.sensor)
 
     def test_motor_pause_preserves_an_already_latched_home_marker(self) -> None:
@@ -2811,7 +3001,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
             "PAUSE must not overwrite STATUS_STOP_LINE after HOME was latched",
         )
 
-    def test_rear_ultrasonic_gates_reverse_start_and_controls_only_reverse(self) -> None:
+    def test_rear_ultrasonic_is_local_to_motor_and_controls_only_reverse(self) -> None:
         self.assert_source(self.sensor, r"USB_SERIAL_BAUD\s*=\s*115200")
         self.assertIn("Serial.begin(USB_SERIAL_BAUD);", self.sensor)
         self.assert_source(self.sensor, r"#define\s+VERBOSE_OPERATION_LOGS\s+0")
@@ -2819,41 +3009,31 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assertIn('Serial.print(F("[DIAG] P="));', self.sensor)
         for core_error in (
             '[I2C] transmit failed address=0x',
-            '[DHT22] read failed on D4',
             '[WIFI] ESP-01 AT communication failed',
             '[WIFI] ESP send busy -> quiet backoff',
             '[RFID] card UID read failed',
         ):
             self.assertIn(core_error, self.sensor)
-        self.assert_source(
-            self.sensor, r"DISTANCE_LOG_INTERVAL_MS\s*=\s*5000"
-        )
         self.assertNotIn("ultrasonicReadyForMovement", self.sensor)
         self.assertNotIn("rejectMovementForUltrasonic", self.sensor)
-        obstacle_start = self.sensor.index("void updateObstacleSensor()")
-        obstacle_end = self.sensor.index("void serviceMotorLink()", obstacle_start)
-        obstacle_body = self.sensor[obstacle_start:obstacle_end]
-        self.assertIn("routeHeading == HEADING_HOMEBOUND", obstacle_body)
-        self.assertIn(
-            "const bool reverseCommandApplied", obstacle_body
-        )
-        self.assertIn("MOTOR_COMMAND_PAUSE", obstacle_body)
-        self.assertIn("MOTOR_COMMAND_RESUME", obstacle_body)
-        self.assertIn("if (!robotIsReversing) return;", obstacle_body)
-        self.assertIn("reversePauseRequired", obstacle_body)
-        self.assertIn("ULTRASONIC_SAMPLE_STUCK_HIGH", obstacle_body)
-        self.assertIn("obstacleDistanceCm < OBSTACLE_STOP_CM", obstacle_body)
-        self.assertIn("obstacleDistanceCm >= OBSTACLE_CLEAR_CM", obstacle_body)
-        self.assertIn("ULTRASONIC_VALID_STREAK_REQUIRED", obstacle_body)
-        self.assertNotIn("stopMotorController();", obstacle_body)
-        self.assertNotIn("robotPhase = PHASE_TASK_COMPLETE", obstacle_body)
+        self.assertNotIn("void updateObstacleSensor()", self.sensor)
+        self.assertNotIn("#include <DHT.h>", self.sensor)
+        self.assertIn("localObstaclePauseActive", self.motor)
+        self.assertIn("bool reverseUltrasonicControlActive()", self.motor)
+        self.assertIn("activeCommand == COMMAND_RETURN && headingHomebound", self.motor)
+        self.assertIn("distanceCm < ULTRASONIC_STOP_CM", self.motor)
+        self.assertIn("distanceCm < ULTRASONIC_CLEAR_CM", self.motor)
+        self.assertIn("ULTRASONIC_CLEAR_STREAK_REQUIRED", self.motor)
+        self.assertIn("ULTRASONIC_SAMPLE_STUCK_HIGH", self.motor)
+        self.assertIn("ULTRASONIC_SAMPLE_NO_ECHO", self.motor)
+        self.assertIn("obstaclePauseActive = status == MOTOR_STATUS_OBSTACLE;", self.sensor)
 
         return_start = self.sensor.index("bool startPlaceholderReturn()")
         return_end = self.sensor.index("bool startPlaceholderModule(", return_start)
         return_body = self.sensor[return_start:return_end]
-        self.assertIn("rearSampleFresh", return_body)
-        self.assertIn("rearStartBlocked", return_body)
-        self.assertIn('queueRobotReport(F("REVERSE_START_BLOCKED"))', return_body)
+        self.assertNotIn("rearSampleFresh", return_body)
+        self.assertNotIn("rearStartBlocked", return_body)
+        self.assertIn("return startRouteTravel(STATION_HOME);", return_body)
 
     def test_failed_tcp_stages_are_closed_before_the_next_poll(self) -> None:
         close_start = self.sensor.index("bool closeTcpAfterFailure()")
@@ -2962,7 +3142,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
 
     def test_route_start_failure_and_missed_home_uid_latch_safe_positions(self) -> None:
         start = self.sensor.index("bool startRouteTravel(RouteStation destination)")
-        end = self.sensor.index("void updateDhtSensor()", start)
+        end = self.sensor.index("void serviceMotorLink()", start)
         route_body = self.sensor[start:end]
         self.assertIn("RouteHeading nextHeading = routeHeading;", route_body)
         self.assertIn("RouteStation nextExpected = expectedStation;", route_body)
@@ -3017,19 +3197,18 @@ class FirmwareSourceContractTests(unittest.TestCase):
         )
         self.assertIsNotNone(wait_body)
         body = wait_body.group("body")
-        self.assertIn("updateObstacleSensor();", body)
         self.assertIn("applyMotorLinkState();", body)
         self.assertIn("updatePlaceholderStateMachine();", body)
         self.assertIn("checkRfidArrival();", body)
         wait_services = [
-            body.index("updateObstacleSensor();"),
             body.index("applyMotorLinkState();"),
             body.index("updatePlaceholderStateMachine();"),
             body.index("checkRfidArrival();"),
         ]
         self.assertEqual(wait_services, sorted(wait_services))
-        # DHT blocks interrupts and could corrupt an active SoftwareSerial response.
+        # DHT/HC now run on their owning peripheral boards, never in an ESP wait.
         self.assertNotIn("updateDhtSensor();", body)
+        self.assertNotIn("updateObstacleSensor();", body)
         self.assertNotIn("updateSensorLcd();", body)
 
         http_body = re.search(
@@ -3040,14 +3219,12 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assertIsNotNone(http_body)
         http_loop = http_body.group("body")
         for service in (
-            "updateObstacleSensor();",
             "applyMotorLinkState();",
             "updatePlaceholderStateMachine();",
             "checkRfidArrival();",
         ):
             self.assertIn(service, http_loop)
         http_services = [
-            http_loop.index("updateObstacleSensor();"),
             http_loop.index("applyMotorLinkState();"),
             http_loop.index("updatePlaceholderStateMachine();"),
             http_loop.index("checkRfidArrival();"),
@@ -3383,13 +3560,16 @@ class FirmwareSourceContractTests(unittest.TestCase):
         for token in (
             "payload[0] = currentDisplayState();",
             "payload[1] = currentDisplayZoneCode();",
-            "payload[2] = static_cast<byte>(temperatureTenths & 0xFF);",
-            "payload[3] = static_cast<byte>((temperatureTenths >> 8) & 0xFF);",
-            "payload[4] = static_cast<byte>(humidityTenths & 0xFF);",
-            "payload[5] = static_cast<byte>((humidityTenths >> 8) & 0xFF);",
+            "payload[2] = 0;",
+            "payload[3] = 0;",
+            "payload[4] = 0;",
+            "payload[5] = 0;",
             "payload[6] = flags;",
         ):
             self.assertIn(token, build_body)
+        self.assertNotIn("sensorTemperature", build_body)
+        self.assertNotIn("sensorHumidity", build_body)
+        self.assertIn("DHT dht(DHT_PIN, DHT_TYPE);", self.actuator)
 
         send_start = self.sensor.index("bool sendDisplayTelemetryFrame()")
         send_end = self.sensor.index("void serviceDisplayTelemetry()", send_start)
@@ -3551,7 +3731,6 @@ class FirmwareSourceContractTests(unittest.TestCase):
             "frame[0] != DISPLAY_FRAME_MAGIC",
             "calculatedCrc != frame[DISPLAY_FRAME_SIZE - 1]",
             "nextState > DISPLAY_STATE_ERROR",
-            "nextHumidityTenths > 1000",
             "displayPayloadErrorCount",
         ):
             self.assertIn(token, display_body)
@@ -3559,20 +3738,26 @@ class FirmwareSourceContractTests(unittest.TestCase):
             display_body.index("frame[0] != DISPLAY_FRAME_MAGIC"),
             display_body.index("lastDisplaySeq = frame[1];"),
         )
-        self.assertLess(
-            display_body.index("nextHumidityTenths > 1000"),
-            display_body.index("lastDisplaySeq = frame[1];"),
-        )
         for token in (
             "currentDisplayState = nextState;",
             "currentZoneCode = nextZone;",
-            "static_cast<uint16_t>(frame[4])",
-            "(static_cast<uint16_t>(frame[5]) << 8)",
-            "static_cast<uint16_t>(frame[6])",
-            "(static_cast<uint16_t>(frame[7]) << 8)",
             "currentInputFlags = frame[8];",
         ):
             self.assertIn(token, display_body)
+        for removed_remote_dht_field in (
+            "nextTemperatureTenths",
+            "nextHumidityTenths",
+            "currentTemperatureTenths",
+            "currentHumidityTenths",
+        ):
+            self.assertNotIn(removed_remote_dht_field, display_body)
+        local_dht_start = self.actuator.index("void serviceLocalDht()")
+        local_dht_end = self.actuator.index("void serviceDisplayStaleness", local_dht_start)
+        local_dht_body = self.actuator[local_dht_start:local_dht_end]
+        self.assertIn("dht.readHumidity()", local_dht_body)
+        self.assertIn("dht.readTemperature()", local_dht_body)
+        self.assertIn("localHumidityTenths", local_dht_body)
+        self.assertIn("localTemperatureTenths", local_dht_body)
 
         self.assert_source(self.actuator, r"DISPLAY_STALE_MS\s*=\s*30000")
         loop_start = self.actuator.index("void loop()")

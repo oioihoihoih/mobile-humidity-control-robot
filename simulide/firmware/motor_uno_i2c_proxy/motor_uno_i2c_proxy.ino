@@ -388,7 +388,7 @@ void setup() {
   Serial.println(F("MotorUno proxy ready: address=0x08"));
   Serial.println(F("PROTOCOL_SYNC=7 then HOME_SYNC=6 required"));
   Serial.println(F("4WD proxy: M1/M3 LEFT, M2/M4 RIGHT"));
-  Serial.println(F("command 1=FORWARD, 2=straight REVERSE_HOME; no U-turn"));
+  Serial.println(F("command 0x11=FORWARD, 0x12=REVERSE_HOME; no U-turn"));
 }
 
 void loop() {

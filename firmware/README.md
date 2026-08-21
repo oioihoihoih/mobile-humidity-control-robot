@@ -7,9 +7,9 @@ two ESP-01 sketches at the fixed sensing zones.
 
 | Role | Sketch | Notes |
 | --- | --- | --- |
-| SensorUno / I²C master | `uno_robot_esp01_rfid_relay/` | Network polling, RFID, local sensors, mission coordination |
-| MotorUno / I²C `0x08` | `uno_line_tracker_motor_controller/` | Four-motor forward/reverse line following and fail-safe control; M1/M3 left, M2/M4 right |
-| ActuatorUno / I²C `0x09` | `uno_humidity_module_controller/` | Humidifier, dehumidifier, fan, and LCD |
+| SensorUno / I²C master | `uno_robot_esp01_rfid_relay/` | Network polling, RFID, route state, mission coordination |
+| MotorUno / I²C `0x08` | `uno_line_tracker_motor_controller/` | Four-motor line following plus local rear HC-SR04 reverse safety; M1/M3 left, M2/M4 right |
+| ActuatorUno / I²C `0x09` | `uno_humidity_module_controller/` | Local DHT22, humidifier, dehumidifier, fan, and LCD |
 | Fixed zone 2 | `zone2_esp01_direct/` | ESP-01 + DHT sensor reporter |
 | Fixed zone 99 | `zone99_esp01_dht11/` | ESP-01 + DHT sensor reporter |
 

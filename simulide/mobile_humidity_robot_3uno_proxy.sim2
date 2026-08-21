@@ -8,7 +8,7 @@
 <mainCompProps MainCompId="mega328-109" Package="1- mega328_DIP" Frequency="16 MHz" ForceFreq="true" savePGM="false" Program="firmware/motor_uno_i2c_proxy/motor_uno_i2c_proxy.ino.hex" Auto_Load="false" saveEepr="true" MainMcu="false" SerialMon="-1" />
 </item>
 
-<item itemtype="Subcircuit" CircId="Uno-3" mainComp="false" Show_id="true" Show_Val="false" Pos="100,360" rotation="0" hflip="1" vflip="1" label="ActuatorUno: 0x09 relay + D5/D4 software-I2C LCD" idLabPos="-145,-30" labelrot="0" valLabPos="-16,20" valLabRot="0" Package="1- Board">
+<item itemtype="Subcircuit" CircId="Uno-3" mainComp="false" Show_id="true" Show_Val="false" Pos="100,360" rotation="0" hflip="1" vflip="1" label="ActuatorUno: 0x09 + local DHT22 D2 + relay/LCD" idLabPos="-145,-30" labelrot="0" valLabPos="-16,20" valLabRot="0" Package="1- Board">
 <mainCompProps MainCompId="mega328-109" Package="1- mega328_DIP" Frequency="16 MHz" ForceFreq="true" savePGM="false" Program="firmware/actuator_uno_i2c_proxy/actuator_uno_i2c_proxy.ino.hex" Auto_Load="false" saveEepr="true" MainMcu="true" SerialMon="-1" />
 </item>
 
@@ -18,7 +18,7 @@
 
 <item itemtype="SerialTerm" CircId="Serial-Actuator" mainComp="false" Show_id="true" Show_Val="false" Pos="500,360" rotation="0" hflip="1" vflip="1" label="ActuatorUno log (9600)" idLabPos="-75,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Baudrate="9600 _Bd" DataBits="8 _bits" StopBits="1 _bits" SerialMon="false" />
 
-<item itemtype="Dht22" CircId="Dht22-Car" mainComp="false" Show_id="true" Show_Val="false" Pos="-350,-250" rotation="0" hflip="1" vflip="1" label="car DHT22: real SensorUno D4" idLabPos="-90,-35" labelrot="0" valLabPos="-16,20" valLabRot="0" DHT22="DHT22" Temp="24 °C" TempInc="0.5 °C" Humi="55 _%" HumiInc="5 _%" />
+<item itemtype="Dht22" CircId="Dht22-Car" mainComp="false" Show_id="true" Show_Val="false" Pos="360,220" rotation="0" hflip="1" vflip="1" label="car DHT22: ActuatorUno local D2" idLabPos="-105,-35" labelrot="0" valLabPos="-16,20" valLabRot="0" DHT22="DHT22" Temp="24 °C" TempInc="0.5 °C" Humi="55 _%" HumiInc="5 _%" />
 
 <item itemtype="Push" CircId="Push-Z2-H" mainComp="false" Show_id="true" Show_Val="false" Pos="-1080,-360" rotation="0" hflip="1" vflip="1" label="SERVER proxy: ZONE2 HUMIDIFY (A0)" idLabPos="-105,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="2" />
 
@@ -118,7 +118,7 @@
 
 <item itemtype="Connector" uid="Connector-Serial-Actuator" startpinid="Uno-3-1" endpinid="Serial-Actuator-pin1" pointList="108,384,450,384,450,368,476,368" />
 
-<item itemtype="Connector" uid="Connector-Car-DHT" startpinid="Dht22-Car-inPin" endpinid="Uno-1-4" pointList="-354,-218,-500,-218,-500,48,-640,48" />
+<item itemtype="Connector" uid="Connector-Car-DHT" startpinid="Dht22-Car-inPin" endpinid="Uno-3-2" pointList="356,252,300,252,300,392,108,392" />
 
 <item itemtype="Connector" uid="Connector-Z2-H-Input" startpinid="Uno-1-A0" endpinid="Push-Z2-H-pinP0" pointList="-498,56,-1200,56,-1200,-360,-1096,-360" />
 

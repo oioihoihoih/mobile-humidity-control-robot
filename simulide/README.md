@@ -5,9 +5,9 @@
 이 회로는 3 Uno 프로토콜과 상태 전이를 검토하는 **논리 프록시**이며, 실제
 자동차의 RF, 전력, 기구 성능을 시뮬레이션하지 않는다.
 
-- SensorUno: I2C master, DHT22 모델, 서버·RFID·HOME 입력 프록시
+- SensorUno: I2C master, 서버·RFID·HOME 입력과 임무 조율 프록시
 - MotorUno: I2C slave `0x08`, HOME interlock, 라인 입력과 M1~M4 4WD 출력 프록시
-- ActuatorUno: I2C slave `0x09`, 가습·펠티어·팬 출력과 LCD 프록시
+- ActuatorUno: I2C slave `0x09`, D2 DHT22, 가습·펠티어·팬 출력과 LCD 프록시
 - 경로 모델: `HOME → ZONE2 → ZONE99`, 복귀는 역순
 
 실행 순서와 버튼 계약은
@@ -23,19 +23,24 @@
 | ZONE2/ZONE99 태그 판정 결과 | RFID 이벤트 버튼; 실제 UID 없음 |
 | HOME 마커와 보정 | HOME 버튼 + 두 IR 입력 |
 | M1/M2 기존 모터 + M3/M4 N20 1:298 | 네 채널별 FORWARD/REVERSE LED 8개 |
+| 자동차 DHT22 | ActuatorUno D2에 연결한 SimulIDE `Dht22` 모델 |
 | active-low 릴레이와 고전력 부하 | 가습·펠티어·팬 LED |
 | LCD1602 I2C 백팩 | `I2CToParallel` + `Hd44780` 16×2 |
 
-DHT22만 SimulIDE의 센서 모델을 직접 사용한다. ESP-01 AT 펌웨어, 실제 HTTP,
+DHT22는 운영 역할과 같이 ActuatorUno D2에서 직접 읽고 LCD 첫 줄에 표시한다.
+SensorUno의 10바이트 표시 프레임은 상태·구역·flags를 전달하며 기존 온·습도
+4바이트는 0인 예약 필드로 유지한다. ESP-01 AT 펌웨어, 실제 HTTP,
 RC522 무선 판독, 모터 전류·토크·제동 거리, 릴레이 접점과 펠티어 열 거동은
 검증 범위 밖이다. LED가 켜지는 것은 제어 신호가 해당 상태가 됐다는 뜻일 뿐,
 실제 부하가 동작했다는 증거가 아니다.
 
-Motor 프록시에서 명령 `1`은 M1~M4 전진, 명령 `2`는 차체를 돌리지 않는
+Motor 프록시에서 명령 `0x11`은 M1~M4 전진, 명령 `0x12`는 차체를 돌리지 않는
 M1~M4 직선 후진(`REVERSE_HOME`)이다. N20 축 뒤쪽의 HC-SR04는 실물에서
-복귀 출발과 주행 중 정지를 보조하며, 이 회로에는 거리 모델이 없다. 따라서
-stale·STUCK_HIGH·근거리 출발 거절과 PAUSE 성능은 프록시 검증 결과에 포함하지
-않는다. Motor 프록시는 대신 command 7/status 8 세대 handshake를 재현해
+MotorUno `ECHO=D2`, `TRIG=A1`에 연결되고 후진 중 로컬 정지를 담당하지만,
+이 회로에는 거리 모델이 없다. 프록시의 D2~D8/D11은 AFMotor 채널 방향을
+보여주는 시뮬레이션 전용 LED이므로 실물 핀맵이 아니다. 따라서 15cm 미만·
+`STUCK_HIGH` 정지와 18cm 이상 3회 재개는 프록시 검증 결과에 포함하지 않는다.
+Motor 프록시는 대신 command 7/status 8 세대 handshake를 재현해
 구형 회전 의미가 섞이면 HOME 보정이 열리지 않는 계약을 확인한다.
 
 ## 실행 전 검증

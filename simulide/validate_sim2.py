@@ -31,6 +31,7 @@ BUILD_MANIFEST = "firmware/build-manifest.json"
 
 LCD_EXPANDER_ID = "I2CToParallel-4"
 LCD_ID = "Hd44780-5"
+CAR_DHT_ID = "Dht22-Car"
 
 # SimulIDE 전용 출력 핀이다. 실제 AFMotor shield 핀맵이 아니라 M1~M4 각
 # 채널이 FORWARD/REVERSE 중 어느 논리 상태인지 독립적으로 보여준다.
@@ -195,6 +196,20 @@ def validate(path: Path) -> list[str]:
     if network.find("Uno-1-A4") == network.find("Uno-1-A5"):
         fail(errors, "SDA and SCL are shorted")
 
+    # 차량 DHT22는 ActuatorUno가 D2에서 직접 읽는다. SensorUno D4에
+    # 남아 있으면 자원 분배 목적과 LCD 로컬 측정 계약을 모두 위반한다.
+    if CAR_DHT_ID not in component_by_id:
+        fail(errors, f"car DHT22 component is missing: {CAR_DHT_ID}")
+    else:
+        dht_pin = f"{CAR_DHT_ID}-inPin"
+        actuator_pin = "Uno-3-2"
+        if dht_pin not in used_pins or actuator_pin not in used_pins:
+            fail(errors, "car DHT22 must be connected to ActuatorUno D2")
+        elif network.find(dht_pin) != network.find(actuator_pin):
+            fail(errors, "car DHT22 is not connected to ActuatorUno D2")
+        if "Uno-1-4" in used_pins:
+            fail(errors, "SensorUno D4 must remain free after moving DHT22")
+
     # ActuatorUno의 LCD는 별도 software-I2C(D5/D4) 버스를 사용한다. 이 버스가
     # 보드 간 통신용 hardware-I2C(A4/A5)와 합쳐지면 두 프로토콜이 충돌한다.
     for component_id in (LCD_EXPANDER_ID, LCD_ID):
@@ -333,6 +348,8 @@ def validate(path: Path) -> list[str]:
             "CONTROL_FRAME_SIZE = 4",
             "STATUS_REPLY_SIZE = 6",
             "STATUS_BYTE_SELECT_BASE = 0xF0",
+            "DHT_PIN = 2",
+            "serviceLocalDht",
         ),
     }
     for uno_id, tokens in expected_source_tokens.items():
@@ -344,6 +361,10 @@ def validate(path: Path) -> list[str]:
     for uno_id in ("Uno-1", "Uno-2"):
         if "TURN_AROUND" in sketch_sources.get(uno_id, ""):
             fail(errors, f"{uno_id}: obsolete TURN_AROUND semantics remain in proxy source")
+
+    sensor_source = sketch_sources.get("Uno-1", "")
+    if "#include <DHT.h>" in sensor_source or "DHT_PIN" in sensor_source:
+        fail(errors, "Uno-1: SensorUno proxy must not own the car DHT22")
 
     home_button = component_by_id.get("Push-Home")
     if home_button is None:
@@ -385,6 +406,7 @@ def main() -> int:
     print("- XML and R260501 line format valid")
     print("- Uno-1/Uno-2/Uno-3 device IDs valid")
     print("- I2C A4/A5 shared nets valid")
+    print("- car DHT22 is connected to ActuatorUno D2; SensorUno D4 is free")
     print("- LCD D5/D4 software-I2C net is isolated and mapped to PCF8574/Hd44780")
     print("- MotorUno M1-M4 forward/reverse LED nets and straight reverse-home semantics valid")
     print("- protocol-v2/status8 and HOME_SYNC/status7 interlocks present")

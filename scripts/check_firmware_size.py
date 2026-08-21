@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail CI before SensorUno exhausts the Arduino Uno's flash or SRAM."""
+"""Keep the distributed SensorUno below the project's flash/SRAM budgets."""
 
 from __future__ import annotations
 
@@ -10,8 +10,10 @@ from pathlib import Path
 
 SENSOR_SKETCH = "uno_robot_esp01_rfid_relay"
 LIMITS = {
-    "flash": 32_100,
-    "RAM for global variables": 1_600,
+    # DHT22 and HC-SR04 were moved to ActuatorUno/MotorUno so future changes
+    # must not silently consume the recovered headroom again.
+    "flash": 29_000,
+    "RAM for global variables": 1_500,
 }
 
 

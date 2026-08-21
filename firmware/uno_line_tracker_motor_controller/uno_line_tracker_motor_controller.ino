@@ -5,6 +5,7 @@
 // [MotorUno / I2C 슬레이브 주소 0x08]
 // SensorUno SDA/SCL -> A4/A5
 // 왼쪽/오른쪽 IR  -> D9/D10
+// 후방 HC-SR04     -> ECHO D2(INT0), TRIG A1
 // 모터 실드 M1/M3 -> 왼쪽 축, M2/M4 -> 오른쪽 축
 // M1/M2는 기존 모터, M3/M4는 새 N20 1:298 후륜 모터
 
@@ -45,6 +46,28 @@ constexpr byte STATUS_PROTOCOL_REQUIRED = 8;
 
 constexpr byte LEFT_IR_PIN = 9;
 constexpr byte RIGHT_IR_PIN = 10;
+constexpr byte ULTRASONIC_ECHO_PIN = 2;
+constexpr byte ULTRASONIC_TRIG_PIN = A1;
+
+// 후방 초음파 센서는 RETURN(후진) 중에만 모터를 제어한다. 15cm 미만이면
+// 즉시 네 모터를 RELEASE하고, 18cm 이상인 유효값을 세 번 연속 확인해야
+// MotorUno가 스스로 재개한다. NO_ECHO/OUT_OF_RANGE는 배선 또는 표면 특성으로
+// 흔히 생길 수 있어 새 정지를 만들지 않지만, 이미 정지한 래치는 해제하지 않는다.
+constexpr unsigned int ULTRASONIC_STOP_CM = 15;
+constexpr unsigned int ULTRASONIC_CLEAR_CM = 18;
+constexpr byte ULTRASONIC_CLEAR_STREAK_REQUIRED = 3;
+constexpr unsigned int ULTRASONIC_MIN_CM = 2;
+constexpr unsigned int ULTRASONIC_MAX_CM = 400;
+constexpr unsigned long ULTRASONIC_SAMPLE_INTERVAL_MS = 100;
+constexpr unsigned long ULTRASONIC_ECHO_TIMEOUT_US = 30000;
+
+enum UltrasonicSampleKind : byte {
+  ULTRASONIC_SAMPLE_UNKNOWN = 0,
+  ULTRASONIC_SAMPLE_VALID = 1,
+  ULTRASONIC_SAMPLE_NO_ECHO = 2,
+  ULTRASONIC_SAMPLE_OUT_OF_RANGE = 3,
+  ULTRASONIC_SAMPLE_STUCK_HIGH = 4,
+};
 
 // 센서 모듈에 따라 검은색 출력 극성이 반대일 수 있다. 실제 바닥/라인을
 // 시리얼 진단으로 확인한 뒤 이 한 값만 변경한다.
@@ -108,6 +131,9 @@ bool headingHomebound = false;
 bool calibrated = false;
 bool protocolValidated = false;
 bool pausedBySensorUno = false;
+// 서버/SensorUno가 보내는 PAUSE와 MotorUno의 후방 장애물 래치는 독립적이다.
+// 특히 COMMAND_RESUME은 이 값을 절대로 지우지 않는다.
+bool localObstaclePauseActive = false;
 bool directionChangeDeadTimeActive = false;
 bool motorOutputsEnergized = false;
 bool motorDirectionKnown = false;
@@ -124,6 +150,32 @@ unsigned long lastMotorReleaseAt = 0;
 unsigned long bothHighStartedAt = 0;
 unsigned long lastSensorLogAt = 0;
 unsigned long lastValidControlAt = 0;
+
+// D2의 CHANGE ISR은 에지 시각만 기록한다. 거리 계산, 모터 제어, Serial은
+// 모두 loop()에서 처리해 I2C와 모터 제어 인터럽트를 오래 막지 않는다.
+volatile unsigned long ultrasonicEchoRiseUs = 0;
+volatile unsigned long ultrasonicEchoPulseUs = 0;
+volatile bool ultrasonicEchoRiseSeen = false;
+volatile bool ultrasonicEchoPulseReady = false;
+
+bool ultrasonicMeasurementActive = false;
+byte ultrasonicClearStreak = 0;
+UltrasonicSampleKind lastUltrasonicSample = ULTRASONIC_SAMPLE_UNKNOWN;
+unsigned int lastUltrasonicDistanceCm = 0;
+unsigned long ultrasonicTriggerStartedUs = 0;
+unsigned long lastUltrasonicSampleAt = 0;
+
+void captureUltrasonicEcho() {
+  const unsigned long nowUs = micros();
+  if (digitalRead(ULTRASONIC_ECHO_PIN) == HIGH) {
+    ultrasonicEchoRiseUs = nowUs;
+    ultrasonicEchoRiseSeen = true;
+  } else if (ultrasonicEchoRiseSeen) {
+    ultrasonicEchoPulseUs = nowUs - ultrasonicEchoRiseUs;
+    ultrasonicEchoPulseReady = true;
+    ultrasonicEchoRiseSeen = false;
+  }
+}
 
 byte scaledTrackingSpeed(byte fullSpeed) {
   return static_cast<byte>((static_cast<unsigned int>(fullSpeed) *
@@ -237,6 +289,221 @@ void resetHomeMarkerState() {
   homeMarkerClearElapsedAtPause = 0;
 }
 
+void clearUltrasonicCapture() {
+  const byte savedSreg = SREG;
+  noInterrupts();
+  ultrasonicEchoRiseUs = 0;
+  ultrasonicEchoPulseUs = 0;
+  ultrasonicEchoRiseSeen = false;
+  ultrasonicEchoPulseReady = false;
+  SREG = savedSreg;
+}
+
+void cancelUltrasonicMeasurement() {
+  ultrasonicMeasurementActive = false;
+  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+  clearUltrasonicCapture();
+}
+
+void resetLocalObstacleState() {
+  localObstaclePauseActive = false;
+  ultrasonicClearStreak = 0;
+  cancelUltrasonicMeasurement();
+}
+
+bool reverseUltrasonicControlActive() {
+  // HOME 마커에 최종 정차한 뒤에는 더 이상 '후진 중'이 아니므로 STOP_LINE
+  // 상태를 초음파가 OBSTACLE로 덮지 않게 한다.
+  return activeCommand == COMMAND_RETURN && headingHomebound &&
+         !homeMarkerLatched;
+}
+
+void latchLocalObstacle(UltrasonicSampleKind reason) {
+  ultrasonicClearStreak = 0;
+  if (!localObstaclePauseActive) {
+    localObstaclePauseActive = true;
+    Serial.print(F("[ULTRASONIC] local reverse PAUSE: "));
+    if (reason == ULTRASONIC_SAMPLE_STUCK_HIGH) {
+      Serial.println(F("ECHO stuck HIGH"));
+    } else {
+      Serial.print(lastUltrasonicDistanceCm);
+      Serial.println(F("cm (<15cm)"));
+    }
+  }
+  stopMotors();
+  motorStatus = STATUS_OBSTACLE;
+}
+
+void applyUltrasonicSample(UltrasonicSampleKind sample,
+                           unsigned int distanceCm) {
+  const UltrasonicSampleKind previousSample = lastUltrasonicSample;
+  lastUltrasonicSample = sample;
+  lastUltrasonicDistanceCm =
+      sample == ULTRASONIC_SAMPLE_VALID ? distanceCm : 0;
+  lastUltrasonicSampleAt = millis();
+
+  if (!reverseUltrasonicControlActive()) return;
+
+  if (sample == ULTRASONIC_SAMPLE_STUCK_HIGH) {
+    latchLocalObstacle(sample);
+    return;
+  }
+
+  if (sample == ULTRASONIC_SAMPLE_NO_ECHO ||
+      sample == ULTRASONIC_SAMPLE_OUT_OF_RANGE) {
+    // 무응답/범위 밖 값은 새 장애물로 판정하지 않는다. 다만 이미 장애물로
+    // 멈췄다면 불확실한 값으로 래치를 풀 수 없으므로 clear 연속값을 끊는다.
+    ultrasonicClearStreak = 0;
+    if (localObstaclePauseActive) {
+      stopMotors();
+      motorStatus = STATUS_OBSTACLE;
+    }
+    if (sample != previousSample) {
+      Serial.println(sample == ULTRASONIC_SAMPLE_NO_ECHO
+                         ? F("[ULTRASONIC] NO_ECHO (diagnostic only)")
+                         : F("[ULTRASONIC] OUT_OF_RANGE (diagnostic only)"));
+    }
+    return;
+  }
+
+  if (distanceCm < ULTRASONIC_STOP_CM) {
+    latchLocalObstacle(sample);
+    return;
+  }
+
+  if (!localObstaclePauseActive) {
+    ultrasonicClearStreak = 0;
+    return;
+  }
+
+  if (distanceCm < ULTRASONIC_CLEAR_CM) {
+    // 15~17cm 히스테리시스 구간에서는 정지를 유지하고 연속 횟수를 초기화한다.
+    ultrasonicClearStreak = 0;
+    stopMotors();
+    motorStatus = STATUS_OBSTACLE;
+    return;
+  }
+
+  if (ultrasonicClearStreak < ULTRASONIC_CLEAR_STREAK_REQUIRED) {
+    ++ultrasonicClearStreak;
+  }
+  stopMotors();
+  motorStatus = STATUS_OBSTACLE;
+
+  Serial.print(F("[ULTRASONIC] clear "));
+  Serial.print(distanceCm);
+  Serial.print(F("cm streak="));
+  Serial.print(ultrasonicClearStreak);
+  Serial.print('/');
+  Serial.println(ULTRASONIC_CLEAR_STREAK_REQUIRED);
+
+  if (ultrasonicClearStreak < ULTRASONIC_CLEAR_STREAK_REQUIRED) return;
+
+  // 로컬 래치만 해제한다. SensorUno가 별도로 PAUSE한 상태라면 네 모터는
+  // 계속 RELEASE이고, 서버의 RESUME이 와야만 실제 주행을 재개한다.
+  localObstaclePauseActive = false;
+  ultrasonicClearStreak = 0;
+  resetMarkerCandidateState();
+  if (pausedBySensorUno) {
+    stopMotors();
+    motorStatus = STATUS_OBSTACLE;
+    Serial.println(F("[ULTRASONIC] local clear; SensorUno PAUSE remains"));
+  } else {
+    motorStatus = STATUS_RUNNING;
+    Serial.println(F("[ULTRASONIC] local clear -> automatic reverse RESUME"));
+  }
+}
+
+void startUltrasonicMeasurement() {
+  // 이전 펄스가 끝나지 않고 ECHO가 HIGH로 붙어 있으면 트리거를 더 보내지
+  // 않는다. 후진에서는 이를 안전 쪽(STUCK_HIGH)으로 판정한다.
+  if (digitalRead(ULTRASONIC_ECHO_PIN) == HIGH) {
+    applyUltrasonicSample(ULTRASONIC_SAMPLE_STUCK_HIGH, 0);
+    return;
+  }
+
+  clearUltrasonicCapture();
+  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+  ultrasonicTriggerStartedUs = micros();
+  ultrasonicMeasurementActive = true;
+}
+
+void serviceRearUltrasonic() {
+  if (!reverseUltrasonicControlActive()) {
+    // OUTBOUND/STOP에서는 후방 센서가 모터 상태에 관여하지 않는다. 방향을
+    // 다시 RETURN으로 바꿀 때는 새 측정값으로 새 래치를 만들어야 한다.
+    if (ultrasonicMeasurementActive || localObstaclePauseActive ||
+        ultrasonicClearStreak != 0) {
+      resetLocalObstacleState();
+    }
+    return;
+  }
+
+  if (localObstaclePauseActive) {
+    // I2C RESUME이나 다른 loop 경로가 상태를 바꾸더라도 로컬 clear 조건 전엔
+    // 네 채널을 매 반복마다 RELEASE로 유지한다.
+    stopMotors();
+    motorStatus = STATUS_OBSTACLE;
+  }
+
+  if (!ultrasonicMeasurementActive) {
+    // 직전 방향 전환 직후라 샘플 간격이 남아 있어도 ECHO가 이미 HIGH로
+    // 붙어 있으면 기다리지 않고 즉시 후진을 정지한다.
+    if (digitalRead(ULTRASONIC_ECHO_PIN) == HIGH) {
+      applyUltrasonicSample(ULTRASONIC_SAMPLE_STUCK_HIGH, 0);
+      return;
+    }
+    if (millis() - lastUltrasonicSampleAt >=
+        ULTRASONIC_SAMPLE_INTERVAL_MS) {
+      startUltrasonicMeasurement();
+    }
+    return;
+  }
+
+  bool pulseReady = false;
+  bool riseSeen = false;
+  unsigned long pulseUs = 0;
+  const byte savedSreg = SREG;
+  noInterrupts();
+  pulseReady = ultrasonicEchoPulseReady;
+  riseSeen = ultrasonicEchoRiseSeen;
+  if (pulseReady) {
+    pulseUs = ultrasonicEchoPulseUs;
+    ultrasonicEchoPulseReady = false;
+  }
+  SREG = savedSreg;
+
+  if (pulseReady) {
+    ultrasonicMeasurementActive = false;
+    const unsigned int distanceCm =
+        static_cast<unsigned int>((pulseUs + 29UL) / 58UL);
+    if (distanceCm < ULTRASONIC_MIN_CM ||
+        distanceCm > ULTRASONIC_MAX_CM) {
+      applyUltrasonicSample(ULTRASONIC_SAMPLE_OUT_OF_RANGE, 0);
+    } else {
+      applyUltrasonicSample(ULTRASONIC_SAMPLE_VALID, distanceCm);
+    }
+    return;
+  }
+
+  if (micros() - ultrasonicTriggerStartedUs <
+      ULTRASONIC_ECHO_TIMEOUT_US) {
+    return;
+  }
+
+  ultrasonicMeasurementActive = false;
+  if (riseSeen || digitalRead(ULTRASONIC_ECHO_PIN) == HIGH) {
+    applyUltrasonicSample(ULTRASONIC_SAMPLE_STUCK_HIGH, 0);
+  } else {
+    applyUltrasonicSample(ULTRASONIC_SAMPLE_NO_ECHO, 0);
+  }
+  clearUltrasonicCapture();
+}
+
 bool isBlack(byte pin) {
   const int blackLevel = LINE_BLACK_IS_HIGH ? HIGH : LOW;
   return digitalRead(pin) == blackLevel;
@@ -299,6 +566,7 @@ void enterSafeStop(byte status) {
   stopMotors();
   activeCommand = COMMAND_STOP;
   pausedBySensorUno = false;
+  resetLocalObstacleState();
   directionChangeDeadTimeActive = false;
   directionChangeDeadTimeStartedAt = 0;
   resetHomeMarkerState();
@@ -406,6 +674,14 @@ void applyCommand(byte command) {
       return;
     }
     pausedBySensorUno = false;
+    if (localObstaclePauseActive) {
+      // 서버 RESUME은 서버가 건 PAUSE만 해제한다. MotorUno가 직접 감지한
+      // 장애물은 18cm 이상 유효값 3회 전까지 절대로 해제하지 않는다.
+      stopMotors();
+      motorStatus = STATUS_OBSTACLE;
+      Serial.println(F("[I2C] RESUME accepted; local obstacle PAUSE remains"));
+      return;
+    }
     if (homeMarkerClearing) {
       homeMarkerClearStartedAt = millis() - homeMarkerClearElapsedAtPause;
     }
@@ -429,10 +705,11 @@ void applyCommand(byte command) {
 
   activeCommand = command;
   pausedBySensorUno = false;
+  if (!nextHomebound) resetLocalObstacleState();
   resetHomeMarkerState();
   resetMarkerCandidateState();
   headingHomebound = nextHomebound;
-  motorStatus = STATUS_RUNNING;
+  motorStatus = localObstaclePauseActive ? STATUS_OBSTACLE : STATUS_RUNNING;
 
   if (startNewDeadTime) {
     stopMotors();
@@ -444,6 +721,12 @@ void applyCommand(byte command) {
   if (preserveExistingDeadTime) {
     // 같은 방향의 새 순번이 도착해도 진행 중인 출력 해제 시간을 줄이지 않는다.
     stopMotors();
+    return;
+  }
+
+  if (localObstaclePauseActive) {
+    stopMotors();
+    Serial.println(F("[ULTRASONIC] RETURN held by local obstacle PAUSE"));
     return;
   }
 
@@ -663,6 +946,18 @@ void handleSerialDiagnostic() {
   Serial.print(homeMarkerDetectionArmed ? 1 : 0);
   Serial.print(F(" directionDeadTime="));
   Serial.print(directionChangeDeadTimeActive ? 1 : 0);
+  Serial.print(F(" sensorPause="));
+  Serial.print(pausedBySensorUno ? 1 : 0);
+  Serial.print(F(" localObstaclePause="));
+  Serial.print(localObstaclePauseActive ? 1 : 0);
+  Serial.print(F(" ultrasonicSample="));
+  Serial.print(static_cast<byte>(lastUltrasonicSample));
+  Serial.print(F(" ultrasonicCm="));
+  Serial.print(lastUltrasonicSample == ULTRASONIC_SAMPLE_VALID
+                   ? lastUltrasonicDistanceCm
+                   : 0);
+  Serial.print(F(" clearStreak="));
+  Serial.print(ultrasonicClearStreak);
   Serial.print(F(" bothHighCandidate="));
   Serial.print(bothHighCandidate ? 1 : 0);
   Serial.print(F(" bothHighMs="));
@@ -674,6 +969,11 @@ void setup() {
 
   pinMode(LEFT_IR_PIN, INPUT);
   pinMode(RIGHT_IR_PIN, INPUT);
+  pinMode(ULTRASONIC_ECHO_PIN, INPUT);
+  pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
+  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
+  attachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN),
+                  captureUltrasonicEcho, CHANGE);
 
   setCruiseSpeeds();
   calibrated = false;
@@ -687,7 +987,7 @@ void setup() {
 
   Serial.println(F("[BOOT] MotorUno I2C slave started"));
   Serial.println(F("[BOOT] address=0x08 SDA=A4 SCL=A5"));
-  Serial.println(F("[BOOT] IR=D9/D10, rear HC-SR04 is on SensorUno"));
+  Serial.println(F("[BOOT] IR=D9/D10, rear HC-SR04 ECHO=D2 TRIG=A1"));
   Serial.println(F("[BOOT] 4WD: M1/M3=LEFT, M2/M4=RIGHT"));
   Serial.print(F("[BOOT] PWM existing M1/M2="));
   Serial.print(EXISTING_AXLE_SPEED);
@@ -696,7 +996,7 @@ void setup() {
   Serial.print(F("[BOOT] direction change dead-time="));
   Serial.print(DIRECTION_CHANGE_DEAD_TIME_MS);
   Serial.println(F("ms"));
-  Serial.println(F("[BOOT] protocol v2: 7=SYNC, 6=HOME, 1=FWD, 2=REVERSE"));
+  Serial.println(F("[BOOT] protocol v2: 7=SYNC, 6=HOME, 0x11=FWD, 0x12=REVERSE"));
   Serial.println(F("[BOOT] RETURN uses straight reverse; no 180-degree turn"));
   Serial.println(F("[BOOT] ZONE arrival: SensorUno RFID -> STOP command"));
   Serial.println(F("[BOOT] HOME arrival: return-direction HIGH/HIGH marker"));
@@ -714,16 +1014,22 @@ void setup() {
   Serial.print(F("[BOOT] control watchdog="));
   Serial.print(CONTROL_WATCHDOG_MS);
   Serial.println(F("ms"));
+  Serial.println(F("[BOOT] reverse ultrasonic: STOP<15cm, RESUME>=18cm x3"));
+  Serial.println(F("[BOOT] STUCK_HIGH stops reverse; NO_ECHO is diagnostic"));
   Serial.println(F("[BOOT] waiting for SensorUno command"));
 }
 
 void loop() {
   processI2cInbox();
+  serviceRearUltrasonic();
   updateHomeMarkerClearSafety();
   updateControlWatchdog();
   handleSerialDiagnostic();
 
-  if (activeCommand == COMMAND_STOP || pausedBySensorUno) return;
+  if (activeCommand == COMMAND_STOP || pausedBySensorUno ||
+      localObstaclePauseActive) {
+    return;
+  }
   if (serviceDirectionChangeDeadTime()) return;
 
   followLine();

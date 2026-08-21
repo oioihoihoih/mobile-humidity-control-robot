@@ -299,16 +299,25 @@ void serviceRfid() {
   if (!driving || millis() - lastRfidScanAt < RFID_SCAN_INTERVAL_MS) return;
   lastRfidScanAt = millis();
   if (!rfid.PICC_IsNewCardPresent()) return;
-  if (!rfid.PICC_ReadCardSerial()) {
-    stopMotorConfirmed(F("RFID UID read failed"));
+
+  // 카드 필드가 잡힌 순간 먼저 정지한다. 이동 진동 때문에 첫 SELECT가
+  // 실패하면 정차 상태에서 최대 5초간 다시 시도한다.
+  const bool stopped = stopMotorConfirmed(F("RFID field detected"));
+  bool uidRead = rfid.PICC_ReadCardSerial();
+  const unsigned long retryStartedAt = millis();
+  while (!uidRead && millis() - retryStartedAt < 5000UL) {
+    delay(40);
+    if (rfid.PICC_IsNewCardPresent()) {
+      uidRead = rfid.PICC_ReadCardSerial();
+    }
+  }
+  if (!uidRead) {
+    Serial.println(F("[RESULT] RFID_FIELD_BUT_UID_READ_FAILED"));
     return;
   }
 
   makeUidText();
   const bool isZone2 = strcmp(uidText, ZONE2_RFID_UID) == 0;
-  // 로그보다 물리 정지가 먼저다.
-  const bool stopped = stopMotorConfirmed(
-      isZone2 ? F("ZONE2 RFID detected") : F("unexpected RFID detected"));
 
   Serial.println(isZone2 ? F("[RFID] ZONE2_MATCH")
                          : F("[RFID] UNEXPECTED_CARD"));

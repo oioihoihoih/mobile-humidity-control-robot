@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <DHT.h>
 #include <SoftwareSerial.h>
 #include "SoftwareMFRC522.h"
 #include "robot_network_config.h"
@@ -9,8 +8,9 @@
 // D5(UNO TX) -> ESP-01 RX(5V->3.3V 분압 필수)
 // D6(UNO RX) <- ESP-01 TX
 // RC522 SDA/SCK/MOSI/MISO/RST -> D8/D9/D10/D11/D12 (소프트웨어 SPI)
-// DHT22 DATA -> D4
-// HC-SR04 ECHO/TRIG -> D2/D3
+// D2/D3/D4는 주변 센서를 다른 Uno로 분배해 비워 둔다.
+// DHT22 DATA -> ActuatorUno D2
+// 뒤쪽 HC-SR04 ECHO/TRIG -> MotorUno D2/A1
 // 주행 Uno와 환경 Uno는 A4(SDA), A5(SCL), GND의 I2C 버스로 연결
 // 세 Uno와 전원들의 제어 GND는 반드시 공통으로 연결한다.
 constexpr byte UNO_ESP_RX_PIN = 6;  // ESP-01 TX가 연결되는 Uno 수신 핀
@@ -20,10 +20,6 @@ constexpr byte RFID_SCK_PIN = 9;
 constexpr byte RFID_MOSI_PIN = 10;
 constexpr byte RFID_MISO_PIN = 11;
 constexpr byte RFID_RST_PIN = 12;
-constexpr byte DHT_PIN = 4;
-constexpr byte DHT_TYPE = DHT22;
-constexpr byte ULTRASONIC_ECHO_PIN = 2;
-constexpr byte ULTRASONIC_TRIG_PIN = 3;
 constexpr unsigned long USB_SERIAL_BAUD = 115200;
 
 // UNO 세 대 사이에서 사용하는 I2C 주소와 명령값이다. MotorUno 명령은
@@ -72,7 +68,6 @@ constexpr byte DISPLAY_STATE_DEHUMIDIFY = 3;
 constexpr byte DISPLAY_STATE_DONE = 4;
 constexpr byte DISPLAY_STATE_RETURNING = 5;
 constexpr byte DISPLAY_STATE_ERROR = 6;
-constexpr byte DISPLAY_FLAG_DHT_VALID = 0x01;
 constexpr byte DISPLAY_FLAG_WIFI_READY = 0x02;
 constexpr byte DISPLAY_FLAG_TASK_ACTIVE = 0x04;
 constexpr byte DISPLAY_FLAG_FAULT = 0x08;
@@ -117,14 +112,12 @@ constexpr unsigned long RETURN_SAFETY_TIMEOUT_MS = 30000;
 constexpr unsigned long MODULE_TIMEOUT_MS = 60000;
 constexpr unsigned long I2C_APPLY_TIMEOUT_MS = 750;
 constexpr unsigned long MOTOR_KEEPALIVE_MS = 400;
-// HC-SR04는 새 N20 후륜 쪽(차량 뒤)을 바라본다. 전진에서는 진단만 하고,
-// 후진은 최신 sample이 있을 때만 시작한다. NO_ECHO/OUT_OF_RANGE는 넓은
-// 공간일 수 있어 허용하지만 STUCK_HIGH와 유효한 근거리 값은 정지시킨다.
+// 뒤쪽 HC-SR04는 MotorUno가 직접 읽고 네 바퀴를 로컬 정지시킨다.
+// SensorUno는 Motor status=OBSTACLE만 받아 경로/RFID 상태를 보존한다.
 
 SoftwareSerial esp8266(UNO_ESP_RX_PIN, UNO_ESP_TX_PIN);
 SoftwareMFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN, RFID_SCK_PIN,
                      RFID_MOSI_PIN, RFID_MISO_PIN);
-DHT dht(DHT_PIN, DHT_TYPE);
 
 // HTTP 헤더 전체를 보관하지 않고 본문 '{'부터 다시 담으므로 명령 JSON에
 // 충분한 크기만 사용한다. Uno의 HTTP 처리 중 스택 충돌 재부팅을 피한다.
@@ -205,7 +198,7 @@ bool routeAtStation = false;
 constexpr unsigned long POLL_INTERVAL_MS = 3000;
 constexpr unsigned long STOP_RETRY_INTERVAL_MS = 500;
 // ESP-01 또는 AP가 응답하지 않을 때 매 서버 폴링마다 긴 초기화를
-// 반복하면 RFID/LCD/DHT 처리가 수십 초씩 멈춘다. 실패 뒤에는 정상
+// 반복하면 RFID/I2C 처리가 수십 초씩 멈춘다. 실패 뒤에는 정상
 // loop()를 계속 돌리고, 이 간격이 지난 뒤에만 다시 접속을 시도한다.
 constexpr unsigned long WIFI_RECONNECT_INTERVAL_MS = 15000;
 // 주행 중 태그를 지나치지 않도록 RC522를 짧은 간격으로 확인한다. 같은
@@ -235,52 +228,9 @@ long lastCommandRevision = -1;
 long acknowledgedRevision = -1;
 byte consecutiveServerFailures = 0;
 constexpr byte SERVER_FAILURES_BEFORE_WIFI_CHECK = 3;
-constexpr unsigned long DHT_INTERVAL_MS = 3000;
-constexpr unsigned long ULTRASONIC_INTERVAL_MS = 150;
-constexpr unsigned long DISTANCE_LOG_INTERVAL_MS = 5000;
-constexpr unsigned int ULTRASONIC_MIN_VALID_CM = 2;
-constexpr unsigned int ULTRASONIC_MAX_VALID_CM = 400;
-constexpr unsigned int OBSTACLE_STOP_CM = 15;
-constexpr unsigned int OBSTACLE_CLEAR_CM = 18;
-constexpr unsigned long ULTRASONIC_TIMEOUT_US = 25000UL;
-constexpr unsigned long ULTRASONIC_FRESHNESS_MS = 1000;
-constexpr byte ULTRASONIC_VALID_STREAK_REQUIRED = 3;
-
-// pulseIn()의 0 반환값만으로는 ECHO가 끝까지 LOW였는지, HIGH에 고정됐는지
-// 구분할 수 없다. 배선/공통 GND 고장을 서버와 시리얼 로그에서 정확히
-// 식별할 수 있도록 마지막 측정 결과를 별도로 보존한다.
-enum UltrasonicSampleStatus : byte {
-  ULTRASONIC_SAMPLE_UNKNOWN,
-  ULTRASONIC_SAMPLE_VALID,
-  ULTRASONIC_SAMPLE_NO_ECHO,
-  ULTRASONIC_SAMPLE_STUCK_HIGH,
-  ULTRASONIC_SAMPLE_OUT_OF_RANGE
-};
-unsigned long lastDhtAt = 0;
-unsigned long lastUltrasonicAt = 0;
-unsigned long lastDistanceLogAt = 0;
-float sensorTemperature = NAN;
-float sensorHumidity = NAN;
-bool dhtReadOk = false;
-long obstacleDistanceCm = -1;
+// MotorUno의 로컬 후방 초음파가 정지시킨 동안 방향 변경 직후의 RFID를
+// 새 역으로 오인하지 않도록 status=OBSTACLE만 기억한다.
 bool obstaclePauseActive = false;
-byte consecutiveUltrasonicValidSamples = 0;
-UltrasonicSampleStatus lastUltrasonicSample = ULTRASONIC_SAMPLE_UNKNOWN;
-unsigned int lastUltrasonicPulseUs = 0;
-unsigned long lastValidUltrasonicAt = 0;
-unsigned long lastUltrasonicSampleAt = 0;
-// D2(INT0) 인터럽트에서는 시간과 상태만 기록한다. Serial/I2C/모터 제어는
-// 절대 ISR에서 실행하지 않고 loop()의 updateObstacleSensor()가 처리한다.
-enum UltrasonicCaptureState : byte {
-  ULTRASONIC_CAPTURE_IDLE,
-  ULTRASONIC_CAPTURE_WAIT_RISE,
-  ULTRASONIC_CAPTURE_WAIT_FALL,
-  ULTRASONIC_CAPTURE_COMPLETE
-};
-volatile UltrasonicCaptureState ultrasonicCaptureState = ULTRASONIC_CAPTURE_IDLE;
-volatile unsigned long ultrasonicEchoRiseUs = 0;
-volatile unsigned int ultrasonicCapturedPulseUs = 0;
-unsigned long ultrasonicTriggerStartedUs = 0;
 constexpr unsigned long DISPLAY_HEARTBEAT_MS = 2000;
 constexpr unsigned long DISPLAY_RETRY_MS = 500;
 constexpr unsigned long DISPLAY_ACK_DELAY_MS = 40;
@@ -479,20 +429,15 @@ void buildDisplayPayload(byte* payload) {
   payload[0] = currentDisplayState();
   payload[1] = currentDisplayZoneCode();
 
-  int16_t temperatureTenths = 0;
-  uint16_t humidityTenths = 0;
-  if (dhtReadOk && !isnan(sensorTemperature) && !isnan(sensorHumidity)) {
-    temperatureTenths = static_cast<int16_t>(
-        sensorTemperature * 10.0f + (sensorTemperature >= 0 ? 0.5f : -0.5f));
-    humidityTenths = static_cast<uint16_t>(sensorHumidity * 10.0f + 0.5f);
-  }
-  payload[2] = static_cast<byte>(temperatureTenths & 0xFF);
-  payload[3] = static_cast<byte>((temperatureTenths >> 8) & 0xFF);
-  payload[4] = static_cast<byte>(humidityTenths & 0xFF);
-  payload[5] = static_cast<byte>((humidityTenths >> 8) & 0xFF);
+  // 10바이트 wire 형식은 이전 Sensor/Actuator 조합과 호환되게 유지한다.
+  // 환경값은 ActuatorUno D2의 로컬 DHT22가 직접 측정하므로 이 네 바이트와
+  // bit0(DHT valid)은 예약값 0으로 보낸다.
+  payload[2] = 0;
+  payload[3] = 0;
+  payload[4] = 0;
+  payload[5] = 0;
 
   byte flags = 0;
-  if (dhtReadOk) flags |= DISPLAY_FLAG_DHT_VALID;
   if (wifiReady) flags |= DISPLAY_FLAG_WIFI_READY;
   if (taskActive) flags |= DISPLAY_FLAG_TASK_ACTIVE;
   if (!strcmp_P(commandResult, PSTR("FAILED"))) flags |= DISPLAY_FLAG_FAULT;
@@ -638,6 +583,7 @@ bool waitForMotorCommand(byte command, byte sequence) {
       continue;
     }
     lastMotorStatus = status;
+    obstaclePauseActive = status == MOTOR_STATUS_OBSTACLE;
 
     // MotorUno가 이 순번을 실제 적용하기 전의 RUNNING/IDLE/STOP_LINE은
     // 이전 명령의 상태이므로 ACK로 인정하지 않는다.
@@ -810,216 +756,6 @@ bool startRouteTravel(RouteStation destination) {
   return true;
 }
 
-void updateDhtSensor() {
-  if (millis() - lastDhtAt < DHT_INTERVAL_MS) return;
-  lastDhtAt = millis();
-
-  const float humidity = dht.readHumidity();
-  const float temperature = dht.readTemperature();
-  if (isnan(humidity) || isnan(temperature)) {
-    dhtReadOk = false;
-    Serial.println(F("[DHT22] read failed on D4"));
-    return;
-  }
-
-  dhtReadOk = true;
-  sensorHumidity = humidity;
-  sensorTemperature = temperature;
-  TRACE_PRINT(F("[DHT22] T="));
-  TRACE_PRINT(sensorTemperature, 1);
-  TRACE_PRINT(F("C H="));
-  TRACE_PRINT(sensorHumidity, 1);
-  TRACE_PRINTLN(F("%"));
-}
-
-// HC-SR04 ECHO는 D2(INT0)의 CHANGE 인터럽트로 비동기 측정한다. 기존
-// pulseIn(..., 25000)은 최대 25ms 동안 loop를 멈춰 ESP SoftwareSerial과
-// MotorUno keepalive를 늦출 수 있었으므로 사용하지 않는다.
-void onUltrasonicEchoChange() {
-  // D2는 ATmega328P의 PD2다. ISR 안에서는 digitalRead보다 짧은 직접 읽기로
-  // SoftwareSerial 수신 타이밍에 주는 영향을 최소화한다.
-  const bool echoHigh = (PIND & _BV(PD2)) != 0;
-  const unsigned long nowUs = micros();
-  if (echoHigh && ultrasonicCaptureState == ULTRASONIC_CAPTURE_WAIT_RISE) {
-    ultrasonicEchoRiseUs = nowUs;
-    ultrasonicCaptureState = ULTRASONIC_CAPTURE_WAIT_FALL;
-  } else if (!echoHigh &&
-             ultrasonicCaptureState == ULTRASONIC_CAPTURE_WAIT_FALL) {
-    const unsigned long pulseUs = nowUs - ultrasonicEchoRiseUs;
-    ultrasonicCapturedPulseUs = static_cast<unsigned int>(
-        pulseUs > 65535UL ? 65535UL : pulseUs);
-    ultrasonicCaptureState = ULTRASONIC_CAPTURE_COMPLETE;
-  }
-}
-
-bool startUltrasonicCapture() {
-  // 정상 HC-SR04의 ECHO는 다음 TRIG 전에는 LOW여야 한다. 150ms가 지난
-  // 시점에도 HIGH이면 pulseIn의 모호한 0 대신 배선/공통 GND 고장으로 분류한다.
-  if (digitalRead(ULTRASONIC_ECHO_PIN) == HIGH) {
-    lastUltrasonicSample = ULTRASONIC_SAMPLE_STUCK_HIGH;
-    lastUltrasonicPulseUs = 0;
-    ultrasonicCaptureState = ULTRASONIC_CAPTURE_IDLE;
-    return true;
-  }
-
-  ultrasonicTriggerStartedUs = micros();
-  noInterrupts();
-  ultrasonicCapturedPulseUs = 0;
-  ultrasonicCaptureState = ULTRASONIC_CAPTURE_WAIT_RISE;
-  interrupts();
-
-  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(ULTRASONIC_TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-  return false;
-}
-
-UltrasonicSampleStatus classifyUltrasonicPulse(unsigned int pulseUs) {
-  const unsigned long distanceCm = pulseUs * 17UL / 1000UL;
-  return distanceCm >= ULTRASONIC_MIN_VALID_CM &&
-                 distanceCm <= ULTRASONIC_MAX_VALID_CM
-             ? ULTRASONIC_SAMPLE_VALID
-             : ULTRASONIC_SAMPLE_OUT_OF_RANGE;
-}
-
-// 아직 진행 중이면 UNKNOWN, 끝났으면 실제 샘플 상태를 반환한다.
-UltrasonicSampleStatus finishUltrasonicCapture(unsigned int& pulseUs) {
-  const bool timedOut =
-      micros() - ultrasonicTriggerStartedUs >= ULTRASONIC_TIMEOUT_US;
-  UltrasonicCaptureState captureState;
-  noInterrupts();
-  captureState = ultrasonicCaptureState;
-  pulseUs = ultrasonicCapturedPulseUs;
-  if (captureState == ULTRASONIC_CAPTURE_COMPLETE ||
-      (timedOut && captureState != ULTRASONIC_CAPTURE_IDLE)) {
-    ultrasonicCaptureState = ULTRASONIC_CAPTURE_IDLE;
-  }
-  interrupts();
-
-  if (captureState == ULTRASONIC_CAPTURE_COMPLETE) {
-    return classifyUltrasonicPulse(pulseUs);
-  }
-  if (captureState == ULTRASONIC_CAPTURE_IDLE || !timedOut) {
-    return ULTRASONIC_SAMPLE_UNKNOWN;
-  }
-
-  // HIGH면 상승 후 하강하지 않은 상태, LOW면 상승 edge가 없었던 NO_ECHO다.
-  pulseUs = 0;
-  return digitalRead(ULTRASONIC_ECHO_PIN) == HIGH
-             ? ULTRASONIC_SAMPLE_STUCK_HIGH
-             : ULTRASONIC_SAMPLE_NO_ECHO;
-}
-
-void updateObstacleSensor() {
-  // 시작 전 ECHO HIGH는 startUltrasonicCapture()가 즉시 분류한다.
-  // 정상 시작 뒤에는 edge 완료/25ms 타임아웃까지만 기다리며 loop는 막지 않는다.
-  if (ultrasonicCaptureState == ULTRASONIC_CAPTURE_IDLE) {
-    if (millis() - lastUltrasonicAt < ULTRASONIC_INTERVAL_MS) return;
-    lastUltrasonicAt = millis();
-    if (!startUltrasonicCapture()) return;
-  } else {
-    unsigned int pulseUs = 0;
-    const UltrasonicSampleStatus finished = finishUltrasonicCapture(pulseUs);
-    if (finished == ULTRASONIC_SAMPLE_UNKNOWN) return;
-    lastUltrasonicSample = finished;
-    lastUltrasonicPulseUs = pulseUs;
-  }
-  lastUltrasonicSampleAt = millis();
-
-  long measuredDistanceCm = -1;
-  const bool validDistance =
-      lastUltrasonicSample == ULTRASONIC_SAMPLE_VALID;
-  if (validDistance) {
-    measuredDistanceCm = static_cast<long>(lastUltrasonicPulseUs * 17UL / 1000UL);
-  }
-  if (validDistance) {
-    obstacleDistanceCm = measuredDistanceCm;
-    if (millis() - lastValidUltrasonicAt > ULTRASONIC_FRESHNESS_MS) {
-      consecutiveUltrasonicValidSamples = 0;
-    }
-    if (consecutiveUltrasonicValidSamples < 255) {
-      ++consecutiveUltrasonicValidSamples;
-    }
-    lastValidUltrasonicAt = millis();
-  } else {
-    obstacleDistanceCm = -1;
-    consecutiveUltrasonicValidSamples = 0;
-  }
-
-#if VERBOSE_OPERATION_LOGS
-  if (millis() - lastDistanceLogAt >= DISTANCE_LOG_INTERVAL_MS) {
-    lastDistanceLogAt = millis();
-    Serial.print(F("[HC-SR04] result="));
-    if (lastUltrasonicSample == ULTRASONIC_SAMPLE_VALID) {
-      Serial.print(F("VALID distance="));
-      Serial.print(obstacleDistanceCm);
-      Serial.print(F("cm pulse_us="));
-      Serial.print(lastUltrasonicPulseUs);
-    } else if (lastUltrasonicSample == ULTRASONIC_SAMPLE_STUCK_HIGH) {
-      Serial.print(F("ECHO_STUCK_HIGH (expected LOW before TRIG)"));
-    } else if (lastUltrasonicSample == ULTRASONIC_SAMPLE_NO_ECHO) {
-      Serial.print(F("NO_ECHO (ECHO stayed LOW)"));
-    } else {
-      Serial.print(F("OUT_OF_RANGE pulse_us="));
-      Serial.print(lastUltrasonicPulseUs);
-    }
-    Serial.print(F(" valid_streak="));
-    Serial.println(consecutiveUltrasonicValidSamples);
-  }
-#endif
-
-  const bool robotIsMoving =
-      robotPhase == PHASE_MOVING || robotPhase == PHASE_RETURNING;
-  const bool reverseCommandApplied =
-      acknowledgedMotorCommand == MOTOR_COMMAND_RETURN ||
-      acknowledgedMotorCommand == MOTOR_COMMAND_PAUSE ||
-      acknowledgedMotorCommand == MOTOR_COMMAND_RESUME;
-  const bool robotIsReversing =
-      robotIsMoving && routeHeading == HEADING_HOMEBOUND &&
-      reverseCommandApplied &&
-      (lastMotorStatus == MOTOR_STATUS_RUNNING ||
-       lastMotorStatus == MOTOR_STATUS_OBSTACLE);
-
-  // 센서가 차체 뒤를 보기 때문에 전진 중에는 거리 측정/진단만 유지한다.
-  // STOP/RFID 정차 중에는 PAUSE를 보내지 않는다. 실제 후진 ACK 뒤에는
-  // 유효한 근거리 또는 STUCK_HIGH를 fail-safe PAUSE로 처리한다.
-  if (!robotIsReversing) return;
-
-  const bool obstacleNear =
-      validDistance && obstacleDistanceCm < OBSTACLE_STOP_CM;
-  const bool reversePauseRequired =
-      obstacleNear || lastUltrasonicSample == ULTRASONIC_SAMPLE_STUCK_HIGH;
-  const bool pathClear =
-      validDistance && obstacleDistanceCm >= OBSTACLE_CLEAR_CM &&
-      consecutiveUltrasonicValidSamples >= ULTRASONIC_VALID_STREAK_REQUIRED;
-
-  // 장애물이 계속 보이는 동안 clear용 정상 연속 횟수를 쌓지 않는다.
-  // 장애물이 사라진 뒤 정상 거리 3회가 확인돼야 RESUME한다.
-  if (reversePauseRequired ||
-      (obstaclePauseActive && validDistance &&
-       obstacleDistanceCm < OBSTACLE_CLEAR_CM)) {
-    consecutiveUltrasonicValidSamples = 0;
-  }
-
-  if (reversePauseRequired && !obstaclePauseActive) {
-    if (sendMotorCommandChecked(MOTOR_COMMAND_PAUSE)) {
-      obstaclePauseActive = true;
-      Serial.println(F("[REAR SAFETY] reverse PAUSE"));
-    } else {
-      motorLinkFaultPending = true;
-    }
-  } else if (pathClear && obstaclePauseActive) {
-    if (sendMotorCommandChecked(MOTOR_COMMAND_RESUME)) {
-      obstaclePauseActive = false;
-      Serial.println(F("[REAR SAFETY] clear >=18cm x3 -> reverse RESUME"));
-    } else {
-      motorLinkFaultPending = true;
-    }
-  }
-}
-
 // MotorUno의 2초 독립 watchdog이 동작하지 않도록 주행 중 400ms마다
 // KEEPALIVE를 보내고 실제 상태도 함께 읽는다. 이 함수는 ESP 응답 대기
 // 루프 안에서도 호출되므로 지연이나 문자열 할당을 하지 않는다.
@@ -1041,6 +777,9 @@ void serviceMotorLink() {
     return;
   }
   lastMotorStatus = status;
+  // 후방 HC-SR04는 MotorUno가 직접 처리한다. 로컬 장애물 정지 상태만
+  // 받아 방향 변경 직후 RFID guard의 경과 시간을 멈춘다.
+  obstaclePauseActive = status == MOTOR_STATUS_OBSTACLE;
   if (appliedCommand != acknowledgedMotorCommand ||
       appliedSequence != acknowledgedMotorSequence ||
       status == MOTOR_STATUS_IDLE ||
@@ -1326,8 +1065,6 @@ bool startPlaceholderMovement() {
     return false;
   }
 
-  // 후방 초음파는 전진 출동을 차단하지 않고 측정/진단만 계속한다.
-  updateObstacleSensor();
   return startRouteTravel(targetStation);
 }
 
@@ -1367,25 +1104,8 @@ bool startPlaceholderReturn() {
     return false;
   }
 
-  // 정차 중 샘플 갱신은 모터 PAUSE를 보내지 않는다. 최신 완료 sample이 없거나
-  // STUCK_HIGH/근거리이면 후진을 시작하지 않는다. NO_ECHO와 OUT_OF_RANGE는
-  // 넓은 공간일 수 있으므로 진단을 남기고 출발을 허용한다.
-  updateObstacleSensor();
-  const bool rearSampleFresh =
-      lastUltrasonicSample != ULTRASONIC_SAMPLE_UNKNOWN &&
-      millis() - lastUltrasonicSampleAt <= ULTRASONIC_FRESHNESS_MS;
-  const bool rearStartBlocked =
-      !rearSampleFresh ||
-      lastUltrasonicSample == ULTRASONIC_SAMPLE_STUCK_HIGH ||
-      (lastUltrasonicSample == ULTRASONIC_SAMPLE_VALID &&
-       obstacleDistanceCm < OBSTACLE_STOP_CM);
-  if (rearStartBlocked) {
-    stopMotorController();
-    robotPhase = PHASE_TASK_COMPLETE;
-    setCommandResult(F("FAILED"));
-    queueRobotReport(F("REVERSE_START_BLOCKED"));
-    return false;
-  }
+  // 후진 시작/장애물 정지는 MotorUno D2/A1의 로컬 HC-SR04가 담당한다.
+  // SensorUno는 I2C ACK와 status=OBSTACLE만 관찰한다.
   return startRouteTravel(STATION_HOME);
 }
 
@@ -1645,15 +1365,6 @@ void checkUsbTestCommands() {
     Serial.print(routeCalibrated ? 1 : 0);
     Serial.print(F(" U="));
     Serial.print(usbZone2MissionActive ? 1 : 0);
-    Serial.print(F(" D="));
-    if (dhtReadOk) {
-      Serial.print(sensorTemperature, 1);
-      Serial.print('/');
-      Serial.print(sensorHumidity, 1);
-    } else {
-      Serial.print(F("ERR"));
-    }
-
     Serial.print(F(" M="));
     Serial.print(motorOk ? 1 : 0);
     Serial.print(',');
@@ -1717,7 +1428,6 @@ bool waitFor(const char* expected, unsigned long timeoutMs,
       }
       if (strstr(espBuffer, "ERROR") || strstr(espBuffer, "FAIL")) return false;
     }
-    updateObstacleSensor();
     applyMotorLinkState();
     updatePlaceholderStateMachine();
     checkRfidArrival();
@@ -1844,43 +1554,86 @@ bool collectHttpResponse() {
   bool received = false;
   bool httpResponseStarted = false;
   bool httpOk = false;
+  bool headersComplete = false;
   bool bodyStarted = false;
+  bool bodyComplete = false;
+  byte headerEndMatch = 0;
   unsigned long lastDataAt = millis();
   const unsigned long startedAt = millis();
   espBusySeen = false;
   espBuffer[0] = '\0';
+  // 이전 AT 거래에서 남은 sticky overflow flag를 지운다. 이번 HTTP 응답에서
+  // 한 바이트라도 유실되면 부분 JSON을 명령으로 실행하지 않는다.
+  (void)esp8266.overflow();
 
   while (millis() - startedAt < 7000) {
     while (esp8266.available()) {
       const char c = static_cast<char>(esp8266.read());
       received = true;
       lastDataAt = millis();
-      // 상태 줄을 확인한 뒤 JSON 본문이 시작되면 헤더를 버리고 본문만
-      // 보관한다. 128바이트 버퍼로도 4개 필드의 명령 JSON을 온전히 파싱한다.
-      if (c == '{' && httpResponseStarted && !bodyStarted) {
-        bodyStarted = true;
-        index = 0;
-        espBuffer[0] = '\0';
-      }
-      if (index < sizeof(espBuffer) - 1) {
-        espBuffer[index++] = c;
-        espBuffer[index] = '\0';
-      }
-      if (strstr(espBuffer, "busy s") || strstr(espBuffer, "busy p")) {
-        espBusySeen = true;
-        wifiReady = false;
-        lastWifiReconnectAttemptAt = millis();
-        return false;
-      }
-      // Python 기본 서버는 HTTP/1.0, 다른 서버는 HTTP/1.1을 사용할 수 있다.
-      // 버전의 마지막 숫자와 관계없이 HTTP 응답이 시작되었는지 확인한다.
-      if (!bodyStarted && strstr(espBuffer, "HTTP/1.")) {
-        httpResponseStarted = true;
-        if (strstr(espBuffer, "HTTP/1.0 200") ||
-            strstr(espBuffer, "HTTP/1.1 200")) httpOk = true;
+      if (!bodyStarted) {
+        if (!httpOk) {
+          // SEND OK/+IPD와 HTTP 상태 줄까지만 임시 보관한다. 200 OK를 찾은
+          // 뒤에는 긴 헤더를 계속 strstr 하지 않아 SoftwareSerial을 즉시 비운다.
+          if (index < sizeof(espBuffer) - 1) {
+            espBuffer[index++] = c;
+            espBuffer[index] = '\0';
+          }
+          if (strstr(espBuffer, "busy s") || strstr(espBuffer, "busy p")) {
+            espBusySeen = true;
+            wifiReady = false;
+            lastWifiReconnectAttemptAt = millis();
+            return false;
+          }
+          // Python 기본 서버는 HTTP/1.0, 다른 서버는 HTTP/1.1을 사용할 수 있다.
+          if (strstr(espBuffer, "HTTP/1.")) {
+            httpResponseStarted = true;
+            if (strstr(espBuffer, "HTTP/1.0 200") ||
+                strstr(espBuffer, "HTTP/1.1 200")) {
+              httpOk = true;
+              index = 0;
+              espBuffer[0] = '\0';
+            }
+          }
+        } else if (!headersComplete) {
+          // JSON의 첫 '{' 한 바이트에 의존하지 않고 HTTP 헤더 끝을 찾는다.
+          // 헤더와 본문이 서로 다른 +IPD 조각이어도 본문 경계를 잃지 않는다.
+          if ((headerEndMatch == 0 && c == '\r') ||
+              (headerEndMatch == 2 && c == '\r')) {
+            ++headerEndMatch;
+          } else if ((headerEndMatch == 1 || headerEndMatch == 3) && c == '\n') {
+            ++headerEndMatch;
+          } else {
+            headerEndMatch = c == '\r' ? 1 : 0;
+          }
+          if (headerEndMatch == 4) {
+            headersComplete = true;
+            index = 0;
+            espBuffer[0] = '\0';
+          }
+        } else if (c == '{') {
+          // 헤더 완료와 JSON 시작을 별도로 확인한다. '{'가 유실된 응답의
+          // key/value 조각만 우연히 남아도 자동차 명령으로 실행하지 않는다.
+          bodyStarted = true;
+          index = 0;
+          espBuffer[0] = '\0';
+          espBuffer[index++] = c;
+          espBuffer[index] = '\0';
+        }
+      } else if (!bodyComplete) {
+        // command JSON은 128바이트 안에 들어온다. status 응답은 더 길 수
+        // 있으므로 앞부분은 보존하고, 저장 공간이 차도 stream의 '}'는 확인한다.
+        if (index < sizeof(espBuffer) - 1) {
+          espBuffer[index++] = c;
+          espBuffer[index] = '\0';
+        }
+        if (c == '}') bodyComplete = true;
       }
     }
-    updateObstacleSensor();
+    if (esp8266.overflow()) {
+      Serial.println(F("[HTTP] ESP RX overflow -> discard response"));
+      return false;
+    }
     applyMotorLinkState();
     updatePlaceholderStateMachine();
     checkRfidArrival();
@@ -1894,8 +1647,11 @@ bool collectHttpResponse() {
     // SEND OK 뒤 실제 HTTP 응답이 늦게 올 수 있으므로 HTTP가 시작된 뒤에만 종료한다.
     if (httpResponseStarted && millis() - lastDataAt > 500) break;
   }
-  // HTTP/1.0과 HTTP/1.1의 200 응답을 모두 정상으로 처리한다.
-  return received && httpOk;
+  // 200 헤더만 받고 JSON이 없거나 잘린 경우를 성공으로 오판하지 않는다.
+  if (httpOk && (!bodyStarted || !bodyComplete)) {
+    Serial.println(F("[HTTP] JSON body incomplete"));
+  }
+  return received && httpOk && bodyStarted && bodyComplete;
 }
 
 bool fetchCommandResponse() {
@@ -2145,8 +1901,6 @@ bool pollServerCommand() {
       // 수동 직진은 RFID 경로 상태와 무관하므로 이후 자동 임무에 오래된 위치를
       // 재사용하지 않도록 출발 전에 경로를 UNKNOWN으로 잠근다.
       latchRouteUnknown();
-      updateObstacleSensor();
-      // 후방 HC-SR04는 앞쪽 수동 전진을 제어하지 않는다.
       const bool motorStarted = moduleStopped &&
           startMotorController(HEADING_OUTBOUND);
       if (motorStarted) {
@@ -2430,26 +2184,14 @@ void setup() {
 
   Serial.println();
   Serial.println(F("[BOOT] UNO CAR USB=115200 ESP=9600"));
-  Serial.println(F("[BOOT] ESP=5/6 RFID=8..12 DHT=4 HC=2/3 I2C=A4/A5"));
+  Serial.println(F("[BOOT] ESP=5/6 RFID=8..12 I2C=A4/A5"));
+  Serial.println(F("[BOOT] DHT=Actuator D2 / rear HC=Motor D2,A1"));
   Serial.println(F("[BOOT] route HOME>ZONE2>ZONE99"));
 
-  dht.begin();
-  pinMode(ULTRASONIC_ECHO_PIN, INPUT);
-  pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
-  digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-  attachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN),
-                  onUltrasonicEchoChange, CHANGE);
-  Serial.println(F("[BOOT] HC-SR04 non-blocking ECHO capture on D2/INT0"));
-  Serial.println(F("[BOOT] HC-SR04 rear safety: reverse PAUSE only"));
-  Serial.println(F("[BOOT] NO_ECHO=diagnostic; STUCK_HIGH=reverse stop"));
-  // 전원/배선 진단: 정상 대기 중인 ESP TX와 DHT DATA는 보통 HIGH,
-  // HC-SR04 ECHO는 LOW이다. ESP TX가 계속 LOW이면 ESP 전원/EN을 먼저 확인한다.
+  // 전원/배선 진단: 정상 대기 중인 ESP TX는 보통 HIGH다. SensorUno의
+  // D2/D3/D4는 분배 후 비워 두며 ESP TX가 계속 LOW이면 전원/EN을 확인한다.
   Serial.print(F("[PIN LEVEL] ESP_TX@D6="));
-  Serial.print(digitalRead(UNO_ESP_RX_PIN));
-  Serial.print(F(" DHT@D4="));
-  Serial.print(digitalRead(DHT_PIN));
-  Serial.print(F(" ECHO@D2="));
-  Serial.println(digitalRead(ULTRASONIC_ECHO_PIN));
+  Serial.println(digitalRead(UNO_ESP_RX_PIN));
 
   // 저속 소프트 ACK 프로브는 버스 진단 스케치에서만 실행한다.
   // 정상 운전에서는 하드웨어 Wire 타임아웃과 슬레이브 상태 ACK를 사용한다.
@@ -2482,8 +2224,8 @@ void setup() {
     Serial.println(F("[RFID] RC522 communication OK, scanning started"));
   }
 
-  // ActuatorUno가 긴 Wi-Fi 초기화 중에도 기본 화면을 표시할 수 있도록 첫
-  // telemetry를 먼저 보낸다. DHT 첫 측정 전에는 invalid flag가 전달된다.
+  // ActuatorUno가 긴 Wi-Fi 초기화 중에도 로컬 DHT22와 기본 상태 화면을
+  // 표시할 수 있도록 첫 상태 telemetry를 먼저 보낸다.
   lastDisplaySentAt = millis() - DISPLAY_RETRY_MS;
   lastDisplayHeartbeatAt = millis() - DISPLAY_HEARTBEAT_MS;
   serviceDisplayTelemetry();
@@ -2501,8 +2243,6 @@ void setup() {
 }
 
 void loop() {
-  updateDhtSensor();
-  updateObstacleSensor();
   applyMotorLinkState();
   serviceStopRetry();
   updatePlaceholderStateMachine();

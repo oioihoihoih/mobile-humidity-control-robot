@@ -18,9 +18,9 @@ flowchart LR
     end
 
     subgraph ROBOT[4모터 전·후진 이동 로봇]
-        SENSOR[SensorUno<br/>ESP-01·RC522·DHT22]
-        MOTOR[MotorUno 0x08<br/>2 IR·M1~M4]
-        ACT[ActuatorUno 0x09<br/>릴레이·LCD]
+        SENSOR[SensorUno<br/>ESP-01·RC522·임무 조율]
+        MOTOR[MotorUno 0x08<br/>2 IR·HC-SR04·M1~M4]
+        ACT[ActuatorUno 0x09<br/>DHT22·릴레이·LCD]
         TRACK[연속 검은 선]
         TAGS[구역 RFID]
         WHEELS[기존 M1/M2 + N20 M3/M4]
@@ -48,8 +48,8 @@ flowchart LR
 | 구역 센서 노드 2대 | 고정 구역의 온·습도를 주기적으로 서버에 전송 | 최신값이 오래되면 서버가 해당 구역을 stale로 표시 |
 | Python 서버 | 입력 검증, MySQL 저장, 습도 판정, 임무 revision과 관제 API 제공 | 신뢰할 새 입력이 없으면 새 동작을 만들지 않고 안전 정지 유지 |
 | SensorUno | 서버 명령 폴링, 경로 상태, RFID 판독, MotorUno·ActuatorUno 조율, ACK 보고 | 위치·통신·ACK가 불명확하면 모터와 액추에이터 정지 요청 |
-| MotorUno | 두 IR 센서로 연속 선을 추종하고 M1~M4를 전진·후진 및 좌우 감속 보정 | calibration 미완료, watchdog 만료, 잘못된 명령에서 네 모터 RELEASE |
-| ActuatorUno | 가습·제습·팬 릴레이의 제한시간 동작과 LCD 표시 | 프레임·CRC·sequence 오류 또는 제한시간 종료 시 출력 OFF |
+| MotorUno | 두 IR로 라인을 추종하고 M1~M4를 구동하며, 로컬 HC-SR04로 후진 장애물을 정지 | calibration 미완료, watchdog 만료, 잘못된 명령, 후진 장애물에서 네 모터 RELEASE |
+| ActuatorUno | D2 DHT22 로컬 측정, 가습·제습·팬 릴레이 제어와 LCD 표시 | DHT 오류는 표시로 격리; 프레임·CRC·sequence 오류 또는 제한시간 종료 시 출력 OFF |
 | MySQL | 측정, 최신 구역 상태, 임무, 설정, 장치와 이벤트 이력 저장 | 연결할 수 없으면 `/ready`가 실패하고 정상 서버 시작·판정을 신뢰하지 않음 |
 
 선택형 USB/Wi-Fi 게이트웨이는 시리얼 로그와 연결 상태를 관제하는 보조 경로입니다. 구역 센서의 HTTP 입력과 자동차의 명령 폴링·ACK가 핵심 폐루프이며, USB 연결만으로 Wi-Fi나 서버 경로가 정상이라고 판단하지 않습니다.
@@ -70,11 +70,12 @@ flowchart LR
 - 복귀 중 ZONE2 태그를 놓쳐도 HOME 마커에서 정지해 위치는 HOME으로 복구하지만, 임무는 성공이 아니라 `FAILED / HOME_RFID_MISSED`로 보고합니다.
 - 트랙은 직선형 하나만 모델링합니다. 분기, 추월, 다중 로봇과 임의 구역 순서는 지원하지 않습니다.
 
-HC-SR04는 N20 후륜 쪽을 바라보고 SensorUno D2/D3에 연결됩니다. 전진에서는
-관측만 합니다. 후진 출발 전 최신 완료 sample이 없거나 `STUCK_HIGH`, 유효
-거리 15cm 미만이면 출발을 거절합니다. 실제 후진 중에는 같은 두 위험 조건에서
-PAUSE하고 18cm 이상을 3회 확인해야 RESUME합니다. `NO_ECHO`와
-`OUT_OF_RANGE`는 넓은 공간일 수 있어 진단만 남기는 보조 기능입니다.
+HC-SR04는 N20 후륜 쪽을 바라보고 MotorUno `ECHO=D2(INT0)`,
+`TRIG=A1`에 연결됩니다. 전진·정지에서는 모터 상태에 관여하지 않고,
+후진 중 15cm 미만 또는 `STUCK_HIGH`면 MotorUno가 SensorUno 응답을
+기다리지 않고 자체 PAUSE합니다. 18cm 이상 유효값 3회 연속에서만
+자동 재개하며, SensorUno가 별도로 PAUSE한 상태는 유지합니다.
+`NO_ECHO`와 `OUT_OF_RANGE`는 넓은 공간일 수 있어 진단만 남깁니다.
 
 ## 임무 상태 흐름
 
@@ -128,7 +129,8 @@ stateDiagram-v2
 | --- | --- |
 | SensorUno ↔ MotorUno | 제어 I2C `0x08`; 명령과 sequence를 적용한 뒤 상태·명령·sequence ACK 반환 |
 | SensorUno ↔ ActuatorUno | 제어 I2C `0x09`; magic·sequence·command·CRC 프레임과 일치하는 `RUNNING → DONE`만 완료 인정 |
-| SensorUno → ActuatorUno | 자동차 DHT22와 상태를 담은 고정 길이 표시 telemetry |
+| SensorUno → ActuatorUno | 상태·구역·플래그를 담은 10바이트 표시 telemetry; 기존 온·습도 4바이트는 0으로 유지하는 예약 필드 |
+| ActuatorUno 로컬 센싱 | D2의 DHT22 온·습도와 SensorUno가 보낸 상태·구역을 LCD 내용으로 결합 |
 | ActuatorUno → LCD | D5/D4의 별도 software-I2C; 3-Uno 제어 버스 A4/A5와 분리 |
 | ESP-01 ↔ 서버 | 신뢰 LAN의 평문 HTTP; 명령 폴링, 상태 ACK, 센서 입력과 이벤트 |
 
