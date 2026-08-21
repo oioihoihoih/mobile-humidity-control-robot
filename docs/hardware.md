@@ -47,12 +47,21 @@ RC522와 ESP-01은 3.3V 장치다. 특히 ESP-01은 송신 순간 전류를 감�
 RFID 매핑은 배포마다 로컬에서 읽은 값을 사용한다.
 
 ```text
+HOME   → <HOME_TAG_UID>
 ZONE2  → <ZONE2_TAG_UID>
 ZONE99 → <ZONE99_TAG_UID>
 ```
 
 UID를 README, 화면 캡처, 로그 예시나 공개 이슈에 기록하지 않는다. SensorUno는
 구역명과 상태만 서버에 보고한다.
+
+HOME 카드 UID는 `firmware/uno_home_rfid_registration/` 예제를 SensorUno에
+잠시 업로드해 읽는다. 이 예제도 위 D8~D12 배선을 그대로 사용한다. 같은 UID가
+두 번 읽히는지 확인한 뒤 실제 값은 Git에서 제외되는
+`robot_network_config.h`의 `ROBOT_HOME_UID`에만 저장하고, SensorUno 운영
+스케치를 반드시 다시 업로드한다. 등록 카드는 차량 리더에서 떼어 트랙의 물리
+HOME 위치에 고정한다. 카드를 리더에 붙인 채 이동시키면 다른 구역 태그를
+읽지 못할 수 있다.
 
 SensorUno는 자동차 DHT22 값과 상태를 고정 10바이트 telemetry로
 ActuatorUno에 보낸다. LCD 오류는 표시 오류로만 다루고, 모터나 릴레이의 안전
@@ -88,9 +97,10 @@ M1/M3을 왼쪽 한 쌍, M2/M4를 오른쪽 한 쌍으로 제어하되 네 모�
 방향인지, IR 센서가 바닥을 향하고 좌우 판정이 뒤바뀌지 않았는지 먼저 확인한다.
 
 MotorUno는 SensorUno의 주기적 KEEPALIVE가 끊기면 네 모터를 RELEASE한다.
-라인센서는 연속된 검은 선의 좌우 편차를 보정하고, 역 도착은 SensorUno의 RFID
-판정 뒤 STOP 적용 ACK로 확정한다. `BENCH_RFID_ONLY_MODE`는 진단 전용이며
-운영 빌드에서는 false여야 한다.
+라인센서는 연속된 검은 선의 좌우 편차를 보정한다. RFID 역 도착은 SensorUno의
+판정 뒤 STOP 적용 ACK로 확정하고, HOME 마커 도착은 MotorUno 상태 ACK로
+확정한다. `BENCH_RFID_ONLY_MODE`는 진단 전용이며 운영 빌드에서는 false여야
+한다.
 
 HC-SR04 본체는 N20 후륜 쪽을 향하게 하고 MotorUno `ECHO=A0`,
 `TRIG=A1`에 연결한다. 후진 중 15cm 미만 또는 `STUCK_HIGH`면 MotorUno가
@@ -171,7 +181,7 @@ Actuator 10바이트 telemetry ACK를 현장에서 확인한다.
 | 서버 주소 | `<SERVER_HOST>` |
 | 서버 포트 | `<SERVER_PORT>` |
 | 서버 시리얼 | `<SERIAL_PORT>` |
-| ZONE2/ZONE99 UID | `<ZONE2_TAG_UID>`, `<ZONE99_TAG_UID>` |
+| HOME/ZONE2/ZONE99 UID | `<HOME_TAG_UID>`, `<ZONE2_TAG_UID>`, `<ZONE99_TAG_UID>` |
 | Wi-Fi 자격 증명 | 로컬 secrets 파일 |
 | MySQL 자격 증명 | `MYSQL_*` 환경 변수 |
 
@@ -191,9 +201,11 @@ Actuator 10바이트 telemetry ACK를 현장에서 확인한다.
 7. 목표 역에서 Actuator exact ACK를 확인하며 제한 시간 동작을 수행한다.
 8. 서버는 완료 이후 들어온 새 측정으로 재작동 또는 RETURN_HOME을 결정한다.
 9. 복귀 중 새 TASK가 생기면 현재 위치와 방향에 맞춰 재라우팅한다.
-10. HOME 방향에서 중간 역을 확인한 뒤 넓은 HOME 마커에서 정상 완료한다.
+10. HOME 방향에서 중간 역을 확인한 뒤 등록된 HOME RFID 또는 넓은 HOME 마커에서 정상 완료한다.
 
-HOME에는 RFID가 없으므로 최종 위치는 방향·중간 역·마커 조건을 함께 사용한다.
+HOME RFID는 예상 HOME으로 복귀할 때만 사용하는 보조 수단이다. 출발 시 리더
+아래에 남은 HOME 태그는 무시하며, 넓은 마커와 `CALIBRATE_HOME`을 대체하지
+않는다. RFID가 읽히지 않아도 마커 도착 판정은 fallback으로 유지된다.
 복귀 중 ZONE2 태그를 놓친 경우에도 HOME 마커에서 정지해 위치는 복구하지만
 `FAILED / HOME_RFID_MISSED`를 보고한다. 이는 완전한 절대 위치 측정이 아니며,
 태그 누락이나 재부팅 뒤에는 원인을 점검하고 HOME에서 다시 보정해야 한다.

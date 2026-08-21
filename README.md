@@ -13,7 +13,7 @@ _합성 데이터로 렌더링한 관제 UI 예시입니다. 실차 왕복이나
 - 고정 센서 노드 2대가 Wi-Fi로 구역별 온·습도를 전송합니다.
 - Python 서버가 측정값과 임무 이력을 MySQL에 저장하고, 습도 편차와 지속시간으로 임무 우선순위를 계산합니다.
 - 자동차는 `SensorUno`(ESP-01·RC522·DHT22·임무 조율), `MotorUno`(4모터·라인·후방 초음파·HOME·watchdog), `ActuatorUno`(릴레이·원격 온·습도 LCD) 3개 Uno R3로 역할을 분리합니다.
-- 4모터 구동부는 차체를 돌리지 않고 전진·후진하며 하나로 이어진 검은 선을 추종하고, 주행 중 RFID로 중간·목표 구역을 확인합니다.
+- 4모터 구동부는 차체를 돌리지 않고 전진·후진하며 하나로 이어진 검은 선을 추종하고, 주행 중 RFID로 중간·목표 구역과 등록 시 복귀 HOME을 확인합니다.
 - 부팅 직후 위치를 추측하지 않습니다. HOME 마커에서 방향을 맞추고 `CALIBRATE_HOME`을 완료하기 전까지 주행을 차단합니다.
 - 임무 완료 뒤에는 같은 측정값으로 액추에이터를 반복 가동하지 않고, 새로운 구역 측정을 기다립니다.
 
@@ -22,7 +22,7 @@ _합성 데이터로 렌더링한 관제 UI 예시입니다. 실차 왕복이나
 | 범위 | 상태 | 의미 |
 | --- | --- | --- |
 | 서버·프로토콜·폐루프 회귀시험 | 자동 검사 제공 | `python scripts/check.py`로 소스 모델과 체크인 SimulIDE artifact 무결성을 검사합니다. SimulIDE의 이전 센서 배치는 현재 실물 핀맵 검증이 아닙니다. |
-| Uno 운영 스케치 | CI 컴파일 게이트 제공 | 현재 로컬 빌드 flash/SRAM은 SensorUno `27,586B / 1,428B`, MotorUno `11,346B / 464B`, ActuatorUno `12,534B / 532B`입니다. SensorUno CI budget은 `29,000B / 1,500B`입니다. |
+| Uno 운영 스케치 | CI 컴파일 게이트 제공 | 현재 로컬 빌드 flash/SRAM은 SensorUno `27,808B / 1,428B`, MotorUno `11,346B / 464B`, ActuatorUno `12,534B / 532B`입니다. SensorUno CI budget은 `29,000B / 1,500B`입니다. |
 | 이전 3-Uno·2모터 벤치 기록 | 제한적 과거 증거 | 정지 상태의 연결, RFID→STOP→액추에이터와 안전 출력 기록이며 현재 M3/M4가 포함된 4모터 검증은 아닙니다. |
 | 현재 4모터 하드웨어 | 미검증 | M1~M4 개별 방향·전류, 좌우 쌍, 전·후진과 후방 센서부터 바퀴를 띄운 상태에서 다시 검증해야 합니다. |
 | 연속 라인·RFID 실차 왕복 | 미검증 | 서로 다른 기존 모터와 N20 1:298을 함께 쓰는 4모터 차체의 속도 정합, 전·후진 선 추종, 카드 판독과 제동거리를 트랙에서 검증해야 합니다. |
@@ -47,7 +47,7 @@ flowchart LR
     ACT --> OUTPUT[가습·제습 릴레이 + 원격 DHT 표시 LCD]
 ```
 
-물리 경로는 `HOME → ZONE2 → ZONE99`의 직선형입니다. 구역 사이의 검은 선은 끊기지 않으며, ZONE2·ZONE99는 RFID로 식별하고 HOME만 넓은 검은 종점 마커로 확인합니다. 전체 상태 전이와 안전 조건은 [아키텍처 문서](docs/architecture.md)에 정리되어 있습니다.
+물리 경로는 `HOME → ZONE2 → ZONE99`의 직선형입니다. 구역 사이의 검은 선은 끊기지 않으며, ZONE2·ZONE99는 RFID로 식별합니다. 등록한 HOME RFID는 복귀 중 보조 도착 수단이고, 넓은 검은 HOME 마커는 보정에 계속 필요하며 RFID를 놓쳤을 때의 fallback으로 남습니다. 전체 상태 전이와 안전 조건은 [아키텍처 문서](docs/architecture.md)에 정리되어 있습니다.
 
 ## 빠른 시작
 
@@ -89,7 +89,8 @@ python server/server.py
 ├── firmware/                  # 운영·진단 Arduino/ESP 스케치
 │   ├── uno_robot_esp01_rfid_relay/        # SensorUno
 │   ├── uno_line_tracker_motor_controller/ # MotorUno
-│   └── uno_humidity_module_controller/    # ActuatorUno
+│   ├── uno_humidity_module_controller/    # ActuatorUno
+│   └── uno_home_rfid_registration/        # HOME UID 읽기 전용 예제
 ├── server/                    # Python 서버, 대시보드, 서버 단위시험
 ├── tests/                     # 3-Uno 프로토콜·폐루프 회귀시험
 ├── simulide/                  # 회로 프록시와 검증 도구
@@ -98,6 +99,8 @@ python server/server.py
 ```
 
 현재 자동차 기준 소스는 위 3개 Uno 스케치입니다. 그 밖의 펌웨어는 구역 센서, 업로드·배선 진단 또는 이전 실험을 위한 보조 자료이므로 파일명과 각 폴더 문서를 확인한 뒤 사용하세요.
+
+HOME UID 등록 예제는 SensorUno의 RC522 D8~D12 배선을 그대로 사용합니다. 읽은 실제 UID는 Git에서 제외되는 `robot_network_config.h`에만 넣고, 예제 확인 뒤에는 반드시 SensorUno 운영 스케치를 다시 업로드해야 합니다. HOME 카드가 리더 아래에 남은 채 출발해도 이를 새 도착으로 재사용하지 않으며, HOME RFID를 등록해도 넓은 마커에서 수행하는 `CALIBRATE_HOME` 절차는 생략할 수 없습니다.
 
 ## 제어 로직 요약
 

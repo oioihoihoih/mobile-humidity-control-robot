@@ -60,6 +60,7 @@ jobs:
             - firmware/uno_humidity_module_controller
             - firmware/uno_motor_power_diagnostic
             - firmware/uno_zone2_rfid_drive_diagnostic
+            - firmware/uno_home_rfid_registration
           libraries: |
             - name: DHT sensor library
               version: 1.4.6

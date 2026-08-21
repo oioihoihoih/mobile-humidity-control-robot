@@ -22,7 +22,7 @@ flowchart LR
         MOTOR[MotorUno 0x08<br/>2 IR·HC-SR04·M1~M4]
         ACT[ActuatorUno 0x09<br/>릴레이·LCD]
         TRACK[연속 검은 선]
-        TAGS[구역 RFID]
+        TAGS[구역 RFID + 선택형 HOME 보조 RFID]
         WHEELS[기존 M1/M2 + N20 M3/M4]
         LOADS[가습·제습 출력]
     end
@@ -57,7 +57,7 @@ flowchart LR
 ## 물리 경로 모델
 
 ```text
-[HOME 넓은 종점 마커] ===== 연속 검은 선 ===== [ZONE2 RFID] ===== [ZONE99 RFID]
+[HOME 넓은 종점 마커 + 보조 RFID] ===== 연속 검은 선 ===== [ZONE2 RFID] ===== [ZONE99 RFID]
 ```
 
 - MotorUno의 두 IR 센서는 연속된 검은 선의 좌우 편차를 보정합니다.
@@ -65,8 +65,8 @@ flowchart LR
 - M1/M3은 왼쪽, M2/M4는 오른쪽으로 묶되 기존 축과 N20 1:298 후륜의 PWM은 따로 조정합니다.
 - ZONE2와 ZONE99는 정지선이 아니라 주행 중 RC522가 읽는 RFID로 식별합니다.
 - ZONE99로 가는 동안 ZONE2를 읽으면 중간 역으로 확정하고, 같은 태그가 판독 범위에서 벗어난 뒤 같은 방향으로 다시 출발합니다.
-- 전진과 후진을 바꾼 직후에는 짧은 안정시간과 최소 한 번의 no-card 관측을 요구해 직전 RFID를 새 도착으로 재사용하지 않습니다.
-- HOME은 RFID가 아니라 두 IR이 동시에 읽는 넓은 종점 마커입니다. 정상 복귀는 HOME 방향, ZONE2 통과 이력, 넓은 마커를 함께 사용합니다.
+- 전진과 후진을 바꾼 직후에는 짧은 안정시간과 최소 한 번의 no-card 관측을 요구해 직전 RFID를 새 도착으로 재사용하지 않습니다. HOME에서 출발할 때 리더 아래에 남아 있는 HOME 태그도 새 도착으로 처리하지 않습니다.
+- 등록한 HOME RFID는 복귀 방향에서 다음 예상 역이 HOME일 때만 보조 도착 수단으로 인정합니다. 넓은 HOME 마커는 `CALIBRATE_HOME`에 계속 필요하며, RFID 미판독 시 독립적인 도착 fallback으로 남습니다.
 - 복귀 중 ZONE2 태그를 놓쳐도 HOME 마커에서 정지해 위치는 HOME으로 복구하지만, 임무는 성공이 아니라 `FAILED / HOME_RFID_MISSED`로 보고합니다.
 - 트랙은 직선형 하나만 모델링합니다. 분기, 추월, 다중 로봇과 임의 구역 순서는 지원하지 않습니다.
 
@@ -92,7 +92,8 @@ stateDiagram-v2
     WAITING_READING --> MOVING: 새 측정도 비정상
     WAITING_READING --> RETURNING: 모든 구역 fresh + normal
     RETURNING --> RETURNING: 역방향 중간 RFID
-    RETURNING --> HOME_READY: ZONE2 통과 + HOME 마커
+    RETURNING --> HOME_READY: ZONE2 통과 + 등록된 HOME RFID
+    RETURNING --> HOME_READY: ZONE2 통과 + HOME 마커 fallback
     RETURNING --> HOME_READY: ZONE2 누락 + HOME 마커 / 위치 복구 후 FAILED 보고
     MOVING --> SAFE_STOP: RFID 순서·통신·watchdog 오류
     MODULE_RUNNING --> SAFE_STOP: 액추에이터 ACK·CRC·제한시간 오류
@@ -100,7 +101,7 @@ stateDiagram-v2
     SAFE_STOP --> CALIBRATION_REQUIRED: 회수·점검·재보정
 ```
 
-`CALIBRATE_HOME`은 위치 탐색 명령이 아닙니다. 사용자가 로봇을 HOME 마커 위에 놓고 차체를 ZONE2 방향으로 맞춘 뒤 실행하는 정지 상태 동기화입니다. 두 IR 센서는 HOME 마커를 확인할 수 있지만 차체가 실제로 어느 방향을 보는지는 판별하지 못합니다.
+`CALIBRATE_HOME`은 위치 탐색 명령이 아닙니다. 사용자가 로봇을 HOME 마커 위에 놓고 차체를 ZONE2 방향으로 맞춘 뒤 실행하는 정지 상태 동기화입니다. HOME RFID를 등록해도 이 절차를 대신할 수 없습니다. 두 IR 센서는 HOME 마커를 확인할 수 있지만 차체가 실제로 어느 방향을 보는지는 판별하지 못합니다.
 
 ## 서버 판정 순서
 
@@ -141,7 +142,7 @@ LCD 오류는 표시 실패로만 격리하고 릴레이 안전 상태 머신과
 1. 부팅·재부팅 뒤 위치와 진행 방향을 추측하지 않습니다.
 2. SensorUno·MotorUno·ActuatorUno는 같은 커밋의 운영 펌웨어를 사용해야 합니다. Motor 프로토콜 handshake가 일치하지 않거나 구형 이동값 `1/2`가 들어오면 모든 출력을 RELEASE하고 HOME 보정·주행을 열지 않습니다. 현재 이동값은 `0x11/0x12`입니다.
 3. calibration 전에는 정지·keepalive·HOME 동기화 외 이동 명령을 실행하지 않습니다.
-4. 예상한 다음 RFID만 위치 확정에 사용하며, 순서 밖 태그는 안전 정지 원인입니다.
+4. 예상한 다음 RFID만 위치 확정에 사용하며, 순서 밖 태그는 안전 정지 원인입니다. 출발 시 잔류 HOME 태그는 재사용하지 않습니다.
 5. 목표 구역에서는 MotorUno의 적용 ACK를 확인한 뒤에만 ActuatorUno 임무를 시작합니다.
 6. 액추에이터 완료는 같은 command·sequence의 `RUNNING`을 먼저 보고 같은 tuple의 `DONE`을 본 경우만 인정합니다.
 7. 센서가 stale이거나 완료 뒤 새 측정이 없으면 정상 복귀나 재가동을 추측하지 않습니다.

@@ -32,8 +32,8 @@ constexpr byte COMMAND_PROTOCOL_SYNC = 7;
 constexpr byte STATUS_IDLE = 0;
 constexpr byte STATUS_RUNNING = 1;
 constexpr byte STATUS_OBSTACLE = 2;
-// ZONE2/ZONE99 도착은 RFID가 결정하지만, RFID가 없는 HOME 종점의
-// 검은 정지 마커에는 기존 값 3을 그대로 사용한다.
+// ZONE2/ZONE99 도착은 RFID가 결정한다. HOME은 선택형 보조 RFID가 있어도
+// 보정과 fallback을 위한 검은 종점 마커에 기존 값 3을 그대로 사용한다.
 constexpr byte STATUS_STOP_LINE = 3;
 constexpr byte STATUS_WATCHDOG_TIMEOUT = 4;
 constexpr byte STATUS_INVALID_COMMAND = 5;

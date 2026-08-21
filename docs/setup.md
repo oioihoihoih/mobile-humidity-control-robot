@@ -167,10 +167,27 @@ Copy-Item firmware/zone99_esp01_dht11/secrets.example.h firmware/zone99_esp01_dh
 
 - Wi-Fi SSID와 비밀번호
 - 서버 PC의 현재 LAN 주소와 서버 포트
-- SensorUno가 읽은 ZONE2·ZONE99 RFID UID
+- SensorUno가 읽은 HOME·ZONE2·ZONE99 RFID UID
 - 구역 노드의 `ZONE_ID`와 실제 DHT 종류
 
 실제 설정 헤더는 `.gitignore` 대상입니다. `git status`에 나타나면 커밋하지 말고 파일명과 ignore 규칙을 먼저 확인하세요. 자격증명이나 제어 토큰을 `.ino`, README, 스크린샷, 로그에 직접 넣지 않습니다.
+
+### HOME RFID UID 등록
+
+HOME 카드는 SensorUno의 기존 RC522 배선 `SDA/SS=D8`, `SCK=D9`,
+`MOSI=D10`, `MISO=D11`, `RST=D12`를 바꾸지 않고 등록합니다.
+
+1. 서버를 `ALL_STOP`으로 두고 바퀴를 띄우거나 모터 전원을 분리합니다.
+2. `firmware/uno_home_rfid_registration/` 예제를 SensorUno에 업로드하고 시리얼 모니터를 `115200 baud`로 엽니다.
+3. HOME 카드 한 장만 리더에 대고, 떼었다 다시 대서 같은 UID가 두 번 출력되는지 확인합니다.
+4. 실제 UID를 공개 로그에 남기지 말고 로컬 `robot_network_config.h`의 `ROBOT_HOME_UID`에 넣습니다.
+5. 카드를 차량 리더에서 완전히 떼어 트랙의 물리 HOME 위치에 고정합니다. 리더에 붙인 채 차량과 함께 이동시키면 안 됩니다.
+6. `firmware/uno_robot_esp01_rfid_relay/` 운영 스케치를 SensorUno에 다시 업로드합니다.
+
+예제는 UID 읽기 전용이므로 예제 업로드 상태에서는 Wi-Fi·I2C·임무 조율이
+동작하지 않습니다. 운영 펌웨어는 복귀 중 예상 HOME에서만 등록 UID를 보조
+도착으로 인정합니다. 출발 시 잔류 HOME 태그는 무시하고, 넓은 HOME 마커를
+사용하는 `CALIBRATE_HOME`과 마커 도착 fallback은 계속 유지합니다.
 
 자동차의 현재 운영 스케치는 다음 세 개입니다.
 
@@ -180,7 +197,7 @@ Copy-Item firmware/zone99_esp01_dht11/secrets.example.h firmware/zone99_esp01_dh
 | MotorUno | `firmware/uno_line_tracker_motor_controller/uno_line_tracker_motor_controller.ino` |
 | ActuatorUno | `firmware/uno_humidity_module_controller/uno_humidity_module_controller.ino` |
 
-현재 로컬 flash/SRAM은 SensorUno `27,586B / 1,428B`, MotorUno
+현재 로컬 flash/SRAM은 SensorUno `27,808B / 1,428B`, MotorUno
 `11,346B / 464B`, ActuatorUno `12,534B / 532B`이며 SensorUno CI budget은
 `29,000B / 1,500B`입니다. 업로드 전 같은 커밋의 CI 또는 Arduino CLI 결과를
 확인하고, 기능·로그·라이브러리를 바꾼 뒤에는 세 스케치와 루프 지연을 다시 측정하세요.
@@ -205,7 +222,7 @@ USB 시리얼 로그가 필요한 경우 다른 시리얼 모니터를 닫고 �
 3. SensorUno가 MotorUno와 ActuatorUno의 I2C 응답을 구분해 받고, D4 DHT22의 10바이트 telemetry가 LCD에 표시되는지 확인합니다.
 4. 자동차를 HOME 마커 조건에 놓고 실제 차체가 ZONE2 방향을 향하는지 사람이 확인합니다.
 5. `CALIBRATE_HOME` 완료 ACK가 확인되기 전에는 이동 명령을 보내지 않습니다.
-6. 라인센서, 모터 방향, MotorUno A0/A1 후방 초음파 정지, RFID 정지, 액추에이터를 각각 분리 시험합니다.
+6. 라인센서, 모터 방향, MotorUno A0/A1 후방 초음파 정지, ZONE·HOME RFID 정지와 HOME 마커 fallback, 액추에이터를 각각 분리 시험합니다.
 
 이 절차는 현재 4모터 구성의 **검증 계획**입니다. 공개된 실물 증거는 이전 2모터 벤치 기록뿐이므로, 현재 커밋은 위 1단계부터 새로 기록해야 합니다. 바닥 트랙 왕복과 고전력 부하는 [현재 한계](limitations.md)의 순서로 진행합니다.
 

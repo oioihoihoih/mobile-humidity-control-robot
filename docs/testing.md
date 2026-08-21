@@ -14,7 +14,7 @@
 | 현재 4모터 하드웨어 | 미검증 | 아직 현재 커밋 대응 실물 증거 없음 | M1~M4 전·후진, 라인 추종, RFID 제동, 후방 센서, 고전력 임무 |
 | 실차·부하 통합 | 미검증 | 아직 완료 증거 없음 | — |
 
-회귀시험 개수는 릴리스 커밋에서 `python scripts/check.py`를 실행해 기록합니다. 현재 로컬 flash/SRAM은 SensorUno `27,586B / 1,428B`, MotorUno `11,346B / 464B`, ActuatorUno `12,534B / 532B`이며 SensorUno firmware budget은 `29,000B / 1,500B`입니다. CI의 고정 라이브러리 결과를 최종 기준으로 사용합니다.
+회귀시험 개수는 릴리스 커밋에서 `python scripts/check.py`를 실행해 기록합니다. 현재 로컬 flash/SRAM은 SensorUno `27,808B / 1,428B`, MotorUno `11,346B / 464B`, ActuatorUno `12,534B / 532B`이며 SensorUno firmware budget은 `29,000B / 1,500B`입니다. CI의 고정 라이브러리 결과를 최종 기준으로 사용합니다.
 
 ## 전체 오프라인 검사
 
@@ -102,6 +102,8 @@ python server/server.py
 | 버전 동기화 | `PROTOCOL_SYNC(7)`이 status 8·같은 command/sequence로 ACK된 뒤에만 HOME_SYNC로 진행; versioned 이동 `0x11/0x12`와 구형 `1/2`를 분리해 부분 업로드·downgrade도 주행 거절 |
 | 3-Uno I2C | SensorUno가 MotorUno와 ActuatorUno를 서로 다른 주소에서 식별하고 잘못된 ACK를 성공으로 처리하지 않음 |
 | HOME 동기화 | 넓은 마커 조건과 사용자 방향 확인 뒤에만 `CALIBRATE_HOME` 완료 ACK |
+| HOME RFID 등록 | D8~D12 등록 예제로 같은 UID를 두 번 읽고, 실제 값은 Git에서 제외되는 로컬 설정에만 저장한 뒤 SensorUno 운영 스케치를 재업로드 |
+| HOME 복귀 판정 | 출발 시 잔류 HOME 태그는 무시하고, 복귀 중 예상 HOME UID는 정지·완료; UID 미판독 시 넓은 HOME 마커가 fallback으로 완료하며 calibration은 계속 마커에서만 수행 |
 | watchdog | SensorUno keepalive가 끊기면 MotorUno가 제한시간 뒤 스스로 정지 |
 | 후방 초음파 | MotorUno A0/A1에서 후진 중 15cm 미만·`STUCK_HIGH` 로컬 정지, 18cm 이상 3회 뒤 재개; 전진에는 영향 없음 |
 | actuator | 고전력 부하 없이 명령·sequence·CRC와 자동 OFF를 확인 |
@@ -115,9 +117,9 @@ python server/server.py
 
 1. 바퀴를 띄우고 M1/M2/M3/M4를 한 채널씩 시험한 뒤 M1+M3, M2+M4, 전체 전진·전체 후진 방향 확인
 2. 연속 검은 선에서 전진·후진·좌우 감속 보정의 반복성과 기존축/N20축 PWM 정합 확인
-3. 주행 속도별 ZONE2·ZONE99 RFID 판독률과 정지거리 측정
+3. 주행 속도별 HOME·ZONE2·ZONE99 RFID 판독률과 정지거리 측정
 4. `HOME → ZONE2 → ZONE99 → ZONE2 → HOME` 무부하 왕복
-5. RFID 누락·순서 오류, SensorUno 재부팅, I2C 단선과 Wi-Fi 끊김 고장 주입
+5. 출발 시 잔류 HOME 태그, HOME RFID 누락 후 마커 fallback, RFID 순서 오류, SensorUno 재부팅, I2C 단선과 Wi-Fi 끊김 고장 주입
 6. 가습·제습 부하를 하나씩 연결해 전류, 전압 강하, 발열과 자동 OFF 측정
 7. MotorUno `ECHO=A0`/`TRIG=A1`에서 후진 중 15cm 미만·`STUCK_HIGH` 로컬 정지와 18cm 이상 3회 뒤 재개 검증
 8. `NO_ECHO`·`OUT_OF_RANGE`가 새 정지를 만들지 않고 기존 장애물 래치도 해제하지 않는지, SensorUno PAUSE가 별도로 유지되는지 검증

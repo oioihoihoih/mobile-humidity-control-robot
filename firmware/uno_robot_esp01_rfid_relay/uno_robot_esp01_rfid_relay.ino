@@ -5,6 +5,12 @@
 #include "SoftwareMFRC522.h"
 #include "robot_network_config.h"
 
+// 이전 로컬 설정 파일도 넓은 HOME 마커 방식으로 계속 컴파일되게 한다.
+// 새 HOME RFID를 등록한 설치에서는 robot_network_config.h가 실제 UID를 제공한다.
+#ifndef ROBOT_HOME_UID
+#define ROBOT_HOME_UID ""
+#endif
+
 // [메인 제어 Arduino Uno]
 // D5(UNO TX) -> ESP-01 RX(5V->3.3V 분압 필수)
 // D6(UNO RX) <- ESP-01 TX
@@ -84,7 +90,9 @@ const char WIFI_PASSWORD[] = ROBOT_WIFI_PASSWORD;
 const char SERVER_HOST[] = ROBOT_SERVER_HOST;
 constexpr uint16_t SERVER_PORT = ROBOT_SERVER_PORT;
 
-// RC522 테스트에서 출력된 실제 UID로 교체한다.
+// RC522 등록 예제에서 출력된 실제 UID로 교체한다. 실제 값은 Git에 넣지 않고
+// ignored robot_network_config.h에만 둔다.
+const char RFID_HOME_UID[] PROGMEM = ROBOT_HOME_UID;
 const char RFID_ZONE2_UID[] PROGMEM = ROBOT_ZONE2_UID;
 const char RFID_ZONE99_UID[] PROGMEM = ROBOT_ZONE99_UID;
 
@@ -699,6 +707,10 @@ bool validRouteStation(RouteStation station) {
   return station >= STATION_HOME && station <= STATION_ZONE99;
 }
 
+bool homeRfidConfigured() {
+  return pgm_read_byte(RFID_HOME_UID) != '\0';
+}
+
 // 현재 위치/방향에서 목적지까지 계속 직진할 수 있는지 계산한다.
 // routeAtStation=false일 때 confirmedStation은 방금 떠난 역,
 // expectedStation은 현재 진행 방향에서 만날 다음 역이다.
@@ -870,7 +882,9 @@ void applyMotorLinkState() {
     // HOMEBOUND 방향으로 확인한 뒤 만나는 다음 정지선만 HOME으로 인정한다.
     } else if (expectedStation == STATION_HOME && targetStation == STATION_HOME) {
       confirmedStation = STATION_HOME;
+      expectedStation = STATION_ZONE2;
       routeAtStation = true;
+      if (homeRfidConfigured()) lastAcceptedRfidStation = STATION_HOME;
       taskActive = false;
       robotPhase = PHASE_IDLE;
       setCommandResult(F("COMPLETED"));
@@ -880,8 +894,9 @@ void applyMotorLinkState() {
       // 복귀 중 ZONE2 UID를 놓쳤더라도 MotorUno의 homebound 전용 마커는
       // 물리 HOME을 뜻한다. 위치는 복구하되 누락은 실패 이벤트로 남긴다.
       confirmedStation = STATION_HOME;
-      expectedStation = STATION_HOME;
+      expectedStation = STATION_ZONE2;
       routeAtStation = true;
+      if (homeRfidConfigured()) lastAcceptedRfidStation = STATION_HOME;
       taskActive = false;
       robotPhase = PHASE_IDLE;
       setCommandResult(F("FAILED"));
@@ -1061,7 +1076,10 @@ bool performHomeCalibration() {
   targetStation = STATION_HOME;
   routeHeading = HEADING_OUTBOUND;
   routeAtStation = true;
-  lastAcceptedRfidStation = STATION_UNKNOWN;
+  // HOME 카드가 리더 아래에 남아 있어도 출발 직후 잘못된 역으로 처리하지
+  // 않는다. 복귀 때 expected=HOME이 되면 같은 UID를 정상 도착으로 허용한다.
+  lastAcceptedRfidStation = homeRfidConfigured()
+      ? STATION_HOME : STATION_UNKNOWN;
   rfidDirectionGuardActive = false;
   rfidDirectionClearSeen = false;
   obstaclePauseActive = false;
@@ -2139,6 +2157,28 @@ void processRouteRfid(RouteStation scannedStation) {
     return;
   }
 
+  // HOME RFID는 기존 넓은 검은 마커를 대체하지 않는 보조 도착 수단이다.
+  // 복귀 방향에서 HOME을 기다리는 경우에만 완료하며, 액추에이터 출력도
+  // 다시 STOP ACK로 확인한다. HOME 마커가 먼저 잡히면 기존 분기가 완료한다.
+  if (scannedStation == STATION_HOME &&
+      targetStation == STATION_HOME &&
+      routeHeading == HEADING_HOMEBOUND) {
+    const bool moduleStopped = stopModuleController();
+    expectedStation = STATION_ZONE2;
+    taskActive = false;
+    manualForwardActive = false;
+    if (moduleStopped) {
+      robotPhase = PHASE_IDLE;
+      setCommandResult(F("COMPLETED"));
+      queueRobotReport(F("HOME_RFID_ARRIVAL"));
+    } else {
+      robotPhase = PHASE_TASK_COMPLETE;
+      setCommandResult(F("I2C_ERROR"));
+      queueRobotReport(F("ACTUATOR_STOP_ERROR"));
+    }
+    return;
+  }
+
   if (confirmedStation == targetStation && taskActive) {
     startPlaceholderModule();
     return;
@@ -2193,7 +2233,9 @@ void checkRfidArrival() {
   makeUidText();
 
   RouteStation scannedStation = STATION_UNKNOWN;
-  if (!strcmp_P(uidText, RFID_ZONE2_UID)) {
+  if (homeRfidConfigured() && !strcmp_P(uidText, RFID_HOME_UID)) {
+    scannedStation = STATION_HOME;
+  } else if (!strcmp_P(uidText, RFID_ZONE2_UID)) {
     scannedStation = STATION_ZONE2;
   } else if (!strcmp_P(uidText, RFID_ZONE99_UID)) {
     scannedStation = STATION_ZONE99;
@@ -2207,7 +2249,9 @@ void checkRfidArrival() {
 
   // 먼저 모터를 정지시킨 뒤 로그를 출력해 고속 주행에서도 제동을 늦추지 않는다.
   processRouteRfid(scannedStation);
-  if (scannedStation == STATION_ZONE2) {
+  if (scannedStation == STATION_HOME) {
+    TRACE_PRINTLN(F("[RFID] ARRIVAL CONFIRMED station=HOME"));
+  } else if (scannedStation == STATION_ZONE2) {
     TRACE_PRINTLN(F("[RFID] ARRIVAL CONFIRMED station=ZONE2"));
   } else if (scannedStation == STATION_ZONE99) {
     TRACE_PRINTLN(F("[RFID] ARRIVAL CONFIRMED station=ZONE99"));

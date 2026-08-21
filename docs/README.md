@@ -44,4 +44,4 @@
 - 실행 예시는 저장소 루트 기준 상대 경로와 `<server-host>` 같은 자리표시자를 사용합니다.
 - 상태 표에는 무엇을 시험했는지와 무엇을 시험하지 않았는지를 함께 기록합니다.
 - 아키텍처가 바뀌면 [아키텍처 문서](architecture.md), API가 바뀌면 [API 문서](api.md), 검증 범위가 바뀌면 [테스트](testing.md)와 [한계](limitations.md)를 같은 변경에서 갱신합니다.
-- 현재 로컬 flash/SRAM은 SensorUno `27,586B / 1,428B`, MotorUno `11,346B / 464B`, ActuatorUno `12,534B / 532B`입니다. SensorUno CI 상한 `29,000B / 1,500B`와 RFID·I2C·HTTP 루프 지연을 함께 확인합니다.
+- 현재 로컬 flash/SRAM은 SensorUno `27,808B / 1,428B`, MotorUno `11,346B / 464B`, ActuatorUno `12,534B / 532B`입니다. SensorUno CI 상한 `29,000B / 1,500B`와 RFID·I2C·HTTP 루프 지연을 함께 확인합니다.
