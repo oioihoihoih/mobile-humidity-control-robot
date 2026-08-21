@@ -1,0 +1,43 @@
+# Local Wi-Fi credentials for the Uno + ESP8266 node
+firmware/uno_dht11_esp8266/secrets.h
+firmware/uno_dht11_esp01_webserver/secrets.h
+firmware/uno_robot_esp01_rfid_relay/robot_network_config.h
+firmware/uno_server_gateway_esp01/gateway_network_config.h
+firmware/zone2_esp01_direct/secrets.h
+firmware/zone99_esp01_dht11/secrets.h
+
+# Runtime data and local build output
+server/robot.db
+firmware/uno_dht11_esp8266/build/
+tmp/
+dist/
+.venv/
+.env
+**/build/
+**/build_manual/
+**/__pycache__/
+*.py[cod]
+*.log
+*.err.log
+.coverage
+htmlcov/
+
+# Local dashboard captures. The curated public screenshot lives in docs/assets/.
+server/dashboard-*.png
+
+# Generated release and firmware artifacts. SimulIDE keeps only the .ino.hex
+# files referenced by its current or explicitly labelled legacy circuits.
+deploy/*.tar
+deploy/*.zip
+server/SHA256SUMS.txt
+/firmware/**/*.hex
+*.elf
+*.eep
+*.bin
+*.with_bootloader.hex
+
+# Editor and operating-system metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

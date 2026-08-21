@@ -1,0 +1,918 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="이동형 제습·가습 로봇의 3 Uno 구성, 서버 판단, RFID 경로, 액추에이터와 안전 로직을 정리한 문서">
+  <title>이동형 제습·가습 로봇 · 현재 로직</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07101d;
+      --panel: #101c2e;
+      --panel-2: #13243a;
+      --panel-3: #0a1727;
+      --line: #213752;
+      --line-strong: #315574;
+      --text: #f1f5f9;
+      --muted: #91a7bd;
+      --cyan: #28d7d0;
+      --blue: #5da9ff;
+      --green: #4ade80;
+      --yellow: #fbbf24;
+      --red: #fb7185;
+      --purple: #c4a7ff;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .2);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 88px; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 8% -6%, rgba(40, 215, 208, .14), transparent 34rem),
+        radial-gradient(circle at 98% 4%, rgba(93, 169, 255, .12), transparent 32rem),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, Pretendard, "Noto Sans KR", system-ui, -apple-system, sans-serif;
+      line-height: 1.58;
+    }
+    a { color: inherit; }
+    button { font: inherit; }
+    code {
+      color: #c9fdf4;
+      background: #0a2730;
+      border: 1px solid #174650;
+      border-radius: 6px;
+      padding: 2px 6px;
+      white-space: nowrap;
+    }
+
+    .shell { width: min(1440px, calc(100% - 40px)); margin: 0 auto; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      min-height: 68px;
+      padding: 10px 0;
+      background: rgba(7, 16, 29, .88);
+      border-bottom: 1px solid rgba(49, 85, 116, .55);
+      backdrop-filter: blur(18px);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; min-width: max-content; }
+    .brand-mark {
+      width: 40px;
+      height: 40px;
+      border-radius: 13px;
+      display: grid;
+      place-items: center;
+      color: #04111d;
+      font-weight: 900;
+      background: linear-gradient(135deg, var(--cyan), var(--blue));
+      box-shadow: 0 8px 24px rgba(40, 215, 208, .18);
+    }
+    .brand strong { display: block; font-size: 14px; }
+    .brand small { display: block; color: var(--muted); font-size: 11px; margin-top: 1px; }
+    .nav { display: flex; align-items: center; gap: 5px; overflow-x: auto; scrollbar-width: none; }
+    .nav::-webkit-scrollbar { display: none; }
+    .nav a {
+      flex: 0 0 auto;
+      color: var(--muted);
+      text-decoration: none;
+      border-radius: 9px;
+      padding: 7px 9px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .nav a:hover, .nav a.active { color: var(--text); background: #14263a; }
+    .top-actions { display: flex; align-items: center; gap: 8px; min-width: max-content; }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 35px;
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--text);
+      background: #12253b;
+      text-decoration: none;
+      cursor: pointer;
+      transition: .15s ease;
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .button:hover { border-color: var(--cyan); transform: translateY(-1px); }
+    .button.primary { background: #0d6f72; border-color: #16979a; }
+
+    .hero { padding: 66px 0 28px; }
+    .hero-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(330px, .75fr); gap: 24px; align-items: stretch; }
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #b8fffa;
+      background: rgba(13, 111, 114, .22);
+      border: 1px solid rgba(40, 215, 208, .3);
+      border-radius: 999px;
+      padding: 7px 11px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .04em;
+    }
+    .kicker::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+    h1 { margin: 18px 0 14px; max-width: 860px; font-size: clamp(36px, 5.4vw, 72px); line-height: 1.05; letter-spacing: -.045em; }
+    .gradient { color: transparent; background: linear-gradient(100deg, #e8ffff 8%, var(--cyan) 52%, var(--blue)); background-clip: text; -webkit-background-clip: text; }
+    .hero-copy { max-width: 850px; margin: 0; color: #b8c9d9; font-size: clamp(15px, 1.5vw, 18px); }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 23px; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 31px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 5px 10px;
+      color: #cbd9e6;
+      background: rgba(16, 28, 46, .8);
+      font-size: 12px;
+      font-weight: 720;
+    }
+    .chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+    .chip.ok .chip-dot { background: var(--green); box-shadow: 0 0 8px rgba(74, 222, 128, .7); }
+    .chip.warn .chip-dot { background: var(--yellow); box-shadow: 0 0 8px rgba(251, 191, 36, .65); }
+    .chip.info .chip-dot { background: var(--blue); box-shadow: 0 0 8px rgba(93, 169, 255, .65); }
+
+    .live-card {
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+      padding: 20px;
+      border: 1px solid var(--line-strong);
+      border-radius: 20px;
+      background:
+        linear-gradient(145deg, rgba(40, 215, 208, .08), transparent 50%),
+        rgba(16, 28, 46, .95);
+      box-shadow: var(--shadow);
+    }
+    .live-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .live-head strong { font-size: 14px; }
+    .live-status { color: var(--yellow); font-size: 11px; font-weight: 800; }
+    .live-command { margin: 23px 0 4px; font-size: 28px; font-weight: 850; letter-spacing: -.03em; overflow-wrap: anywhere; }
+    .live-target { color: var(--cyan); font-size: 14px; font-weight: 800; }
+    .live-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 20px; }
+    .live-cell { min-width: 0; padding: 10px; border-radius: 12px; background: rgba(5, 16, 28, .72); border: 1px solid rgba(49, 85, 116, .55); }
+    .live-cell span { display: block; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+    .live-cell b { display: block; margin-top: 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .live-foot { margin-top: auto; padding-top: 17px; color: var(--muted); font-size: 11px; }
+
+    .notice {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 13px;
+      align-items: start;
+      margin: 10px 0 34px;
+      padding: 15px 17px;
+      border: 1px solid #6b5223;
+      border-radius: 15px;
+      background: rgba(89, 65, 18, .32);
+      color: #f6e5b5;
+    }
+    .notice-icon { font-size: 20px; line-height: 1.2; }
+    .notice strong { color: #fff0bf; }
+    .notice p { margin: 3px 0 0; color: #d7c492; font-size: 13px; }
+    .notice.route { border-color: #246c75; background: rgba(10, 70, 78, .3); color: #d5fffc; }
+    .notice.route strong { color: #dcfffd; }
+    .notice.route p { color: #addbd8; }
+
+    .section { padding: 34px 0; }
+    .section-head { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 17px; }
+    .section-index { color: var(--cyan); font-size: 11px; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
+    h2 { margin: 5px 0 0; font-size: clamp(24px, 3vw, 38px); line-height: 1.18; letter-spacing: -.035em; }
+    .section-desc { max-width: 630px; margin: 0; color: var(--muted); font-size: 13px; }
+    .panel { border: 1px solid var(--line); background: rgba(16, 28, 46, .92); border-radius: 19px; box-shadow: var(--shadow); }
+    .panel-pad { padding: 20px; }
+    .panel-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+    .panel-title h3 { margin: 0; font-size: 16px; }
+    .panel-note { color: var(--muted); font-size: 11px; }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: minmax(200px, .8fr) 50px minmax(230px, .92fr) 50px minmax(280px, 1.1fr);
+      gap: 10px;
+      align-items: stretch;
+    }
+    .arch-group { display: grid; gap: 10px; }
+    .arch-node {
+      position: relative;
+      min-height: 106px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--panel-2);
+    }
+    .arch-node.primary { border-color: #23878d; background: linear-gradient(145deg, rgba(40, 215, 208, .1), var(--panel-2)); }
+    .arch-node.server { border-color: #3a78ad; background: linear-gradient(145deg, rgba(93, 169, 255, .11), var(--panel-2)); }
+    .arch-node h3 { margin: 4px 0 7px; font-size: 16px; }
+    .arch-node p { margin: 0; color: var(--muted); font-size: 12px; }
+    .arch-label { color: var(--cyan); font-size: 10px; font-weight: 850; letter-spacing: .09em; text-transform: uppercase; }
+    .arch-arrow { display: grid; place-items: center; color: var(--cyan); font-size: 25px; }
+    .branch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-top: 10px; }
+    .branch .arch-node { min-height: 118px; }
+    .address { display: inline-block; margin-top: 8px; color: #d8ecff; font: 700 11px/1.2 Consolas, monospace; }
+    .protocol-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-top: 14px; }
+    .protocol-item { padding: 11px 12px; border-radius: 12px; background: var(--panel-3); border: 1px solid rgba(49, 85, 116, .58); }
+    .protocol-item span { color: var(--muted); font-size: 10px; }
+    .protocol-item b { display: block; margin-top: 4px; font-size: 12px; }
+
+    .flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; counter-reset: flow; }
+    .flow-card {
+      position: relative;
+      min-height: 178px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--panel-2);
+      overflow: hidden;
+      counter-increment: flow;
+    }
+    .flow-card::before {
+      content: counter(flow, decimal-leading-zero);
+      display: block;
+      color: var(--cyan);
+      font: 850 11px/1 Consolas, monospace;
+      letter-spacing: .1em;
+      margin-bottom: 17px;
+    }
+    .flow-card::after {
+      content: "";
+      position: absolute;
+      width: 74px;
+      height: 74px;
+      right: -32px;
+      bottom: -34px;
+      border-radius: 50%;
+      background: var(--cyan);
+      opacity: .05;
+    }
+    .flow-card h3 { margin: 0 0 7px; font-size: 15px; }
+    .flow-card p { margin: 0; color: var(--muted); font-size: 12px; }
+    .flow-card .mini { display: block; margin-top: 12px; color: #cbe2f6; font-size: 10px; font-weight: 760; }
+
+    .route-layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, .7fr); gap: 14px; }
+    .track { padding: 27px 18px 20px; overflow: hidden; }
+    .track-line {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      align-items: start;
+      gap: 20px;
+      margin: 12px 8px 28px;
+    }
+    .track-line::before { content: ""; position: absolute; top: 22px; left: 16.66%; right: 16.66%; height: 4px; border-radius: 10px; background: linear-gradient(90deg, var(--blue), var(--cyan), var(--purple)); opacity: .75; }
+    .station { position: relative; z-index: 1; text-align: center; }
+    .station-dot {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 9px;
+      display: grid;
+      place-items: center;
+      border: 4px solid var(--panel);
+      border-radius: 50%;
+      background: var(--cyan);
+      color: #03121d;
+      font-size: 13px;
+      font-weight: 900;
+      box-shadow: 0 0 0 2px var(--cyan), 0 0 22px rgba(40, 215, 208, .25);
+    }
+    .station:first-child .station-dot { background: var(--blue); box-shadow: 0 0 0 2px var(--blue), 0 0 22px rgba(93,169,255,.25); }
+    .station:last-child .station-dot { background: var(--purple); box-shadow: 0 0 0 2px var(--purple), 0 0 22px rgba(196,167,255,.25); }
+    .station b { display: block; font-size: 14px; }
+    .station small { color: var(--muted); font-size: 10px; }
+    .route-cases { display: grid; gap: 9px; }
+    .route-case { display: grid; grid-template-columns: 88px 1fr; gap: 11px; align-items: start; padding: 11px; border-radius: 12px; background: var(--panel-3); border: 1px solid rgba(49,85,116,.58); }
+    .route-case strong { color: #d9f8f7; font-size: 11px; }
+    .route-case span { color: var(--muted); font-size: 11px; }
+    .route-rules { display: grid; gap: 9px; }
+    .rule { padding: 13px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); }
+    .rule b { display: block; color: #eaf7ff; font-size: 12px; }
+    .rule p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+
+    .state-track { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+    .state {
+      position: relative;
+      min-height: 137px;
+      padding: 14px 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-2);
+    }
+    .state:not(:last-child)::after { content: "›"; position: absolute; right: -8px; top: 47%; z-index: 2; color: var(--cyan); font-size: 20px; font-weight: 900; }
+    .state span { color: var(--cyan); font: 800 10px/1 Consolas, monospace; }
+    .state h3 { margin: 10px 0 7px; font-size: 13px; }
+    .state p { margin: 0; color: var(--muted); font-size: 10px; }
+    .exception-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-top: 10px; }
+    .exception { padding: 12px; border: 1px dashed var(--line-strong); border-radius: 12px; background: rgba(8, 24, 40, .55); }
+    .exception b { color: var(--yellow); font-size: 11px; }
+    .exception p { margin: 3px 0 0; color: var(--muted); font-size: 10px; }
+
+    .tabs { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 13px; }
+    .tab {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--muted);
+      background: #0c1b2d;
+      padding: 6px 11px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .tab:hover, .tab.active { color: var(--text); border-color: var(--cyan); background: #12313d; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 13px; }
+    table { width: 100%; min-width: 650px; border-collapse: collapse; background: rgba(10, 23, 39, .7); }
+    th, td { padding: 11px 13px; border-bottom: 1px solid rgba(49,85,116,.48); text-align: left; vertical-align: top; font-size: 12px; }
+    th { color: #c8d9e8; background: rgba(19,36,58,.9); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+    td { color: #dbe7f1; }
+    td small { color: var(--muted); }
+    tr:last-child td { border-bottom: 0; }
+    .pin { color: var(--cyan); font: 800 12px/1.4 Consolas, monospace; }
+
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .command-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .command { padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-3); }
+    .command code { display: inline-block; margin-bottom: 7px; }
+    .command p { margin: 0; color: var(--muted); font-size: 11px; }
+    .api-flow { display: grid; gap: 8px; }
+    .api { padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-3); }
+    .api b { display: block; color: #dceefa; font: 750 11px/1.4 Consolas, monospace; }
+    .api span { color: var(--muted); font-size: 10px; }
+
+    .safety-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+    .safety {
+      min-height: 153px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-2);
+    }
+    .safety-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; background: #183047; color: var(--cyan); font-weight: 900; }
+    .safety h3 { margin: 11px 0 6px; font-size: 13px; }
+    .safety p { margin: 0; color: var(--muted); font-size: 10px; }
+
+    .verify-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .verify-card { padding: 16px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel-2); }
+    .verify-card h3 { margin: 0 0 12px; font-size: 14px; }
+    .check-list { display: grid; gap: 9px; }
+    .check { display: grid; grid-template-columns: 19px 1fr; gap: 8px; align-items: start; }
+    .check-mark { width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-weight: 900; margin-top: 1px; }
+    .check.ok .check-mark { color: #062512; background: var(--green); }
+    .check.warn .check-mark { color: #332308; background: var(--yellow); }
+    .check.pending .check-mark { color: #0a1a2d; background: var(--blue); }
+    .check.fail .check-mark { color: #350914; background: var(--red); }
+    .check b { display: block; font-size: 11px; }
+    .check small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; }
+    .memory-bar { height: 8px; overflow: hidden; border-radius: 999px; background: #1a3048; margin: 8px 0 5px; }
+    .memory-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--yellow), var(--red)); width: 72%; }
+
+    .test-sequence { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+    .test-step { min-height: 130px; padding: 12px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel-2); }
+    .test-step span { color: var(--cyan); font: 800 10px/1 Consolas, monospace; }
+    .test-step b { display: block; margin: 10px 0 5px; font-size: 12px; }
+    .test-step p { margin: 0; color: var(--muted); font-size: 10px; }
+
+    .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 13px; color: var(--muted); font-size: 10px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .legend .ok i { background: var(--green); }
+    .legend .warn i { background: var(--yellow); }
+    .legend .pending i { background: var(--blue); }
+    .legend .fail i { background: var(--red); }
+
+    .footer { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-top: 42px; padding: 24px 0 36px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+    .footer-links { display: flex; gap: 8px; }
+
+    @media (max-width: 1100px) {
+      .nav { display: none; }
+      .hero-grid, .route-layout { grid-template-columns: 1fr; }
+      .architecture { grid-template-columns: 1fr; }
+      .arch-arrow { transform: rotate(90deg); height: 30px; }
+      .flow { grid-template-columns: repeat(3, 1fr); }
+      .state-track { grid-template-columns: repeat(3, 1fr); }
+      .state:nth-child(3)::after { display: none; }
+      .safety-grid { grid-template-columns: repeat(2, 1fr); }
+      .test-sequence { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 720px) {
+      .shell { width: min(100% - 26px, 1440px); }
+      .brand small, .top-actions .button.secondary { display: none; }
+      .hero { padding-top: 43px; }
+      .hero-grid { gap: 15px; }
+      .hero-meta { gap: 6px; }
+      .section { padding: 27px 0; }
+      .section-head { display: block; }
+      .section-desc { margin-top: 9px; }
+      .branch, .protocol-strip, .flow, .two-col, .verify-grid { grid-template-columns: 1fr; }
+      .flow-card { min-height: 142px; }
+      .state-track, .exception-row { grid-template-columns: 1fr 1fr; }
+      .state::after { display: none; }
+      .safety-grid, .test-sequence, .command-grid { grid-template-columns: 1fr; }
+      .live-grid { grid-template-columns: 1fr 1fr; }
+      .footer { align-items: flex-start; flex-direction: column; }
+    }
+    @media print {
+      :root { color-scheme: light; --bg:#fff; --panel:#fff; --panel-2:#f7fafc; --panel-3:#f4f7fa; --line:#ccd7e2; --line-strong:#aebdca; --text:#111827; --muted:#526475; --shadow:none; }
+      body { background:#fff; color:#111827; }
+      .topbar { position: static; background:#fff; }
+      .nav, .top-actions, .live-card, .notice-icon { display:none; }
+      .hero-grid { grid-template-columns:1fr; }
+      .hero { padding-top:32px; }
+      .panel, .flow-card, .state, .safety, .verify-card, .test-step { break-inside: avoid; box-shadow:none; }
+      .section { break-inside: avoid; }
+      code { color:#0f766e; background:#ecfeff; border-color:#a5f3fc; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="#overview" aria-label="현재 로직 문서 맨 위로">
+        <span class="brand-mark">HR</span>
+        <span><strong>HumiBot</strong><small>3 Uno 통합 로직 문서</small></span>
+      </a>
+      <nav class="nav" aria-label="문서 목차">
+        <a href="#architecture">구성</a>
+        <a href="#flow">동작 흐름</a>
+        <a href="#route">경로</a>
+        <a href="#states">상태</a>
+        <a href="#wiring">배선</a>
+        <a href="#safety">안전</a>
+        <a href="#verification">검증</a>
+      </nav>
+      <div class="top-actions">
+        <button class="button secondary" type="button" id="printButton">인쇄 / PDF</button>
+        <a class="button primary" href="/">관제 화면</a>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" id="overview">
+        <div class="hero-grid">
+          <div>
+            <span class="kicker">설계 기준 · 검증 범위 분리</span>
+            <h1>이동형 <span class="gradient">제습·가습 로봇</span><br>통합 동작 로직</h1>
+            <p class="hero-copy">ZONE2와 ZONE99의 온·습도를 서버가 감시하고, 자동차의 SensorUno가 MotorUno·ActuatorUno를 조율해 이동, RFID 도착 확인, 가습 또는 제습, 복귀까지 수행하는 현재 설계를 한 페이지에 정리했습니다.</p>
+            <div class="hero-meta">
+              <span class="chip info"><i class="chip-dot"></i>3 × Arduino Uno R3</span>
+              <span class="chip info"><i class="chip-dot"></i>2WD · 좌/우 단일 모터</span>
+              <span class="chip ok"><i class="chip-dot"></i>오프라인 검사 명령 제공</span>
+              <span class="chip warn"><i class="chip-dot"></i>하드웨어 통합 검증 필요</span>
+            </div>
+          </div>
+
+          <aside class="live-card" aria-live="polite">
+            <div class="live-head"><strong>서버 읽기 전용 스냅샷</strong><span class="live-status" id="liveStatus">연결 확인 중</span></div>
+            <div class="live-command" id="liveCommand">—</div>
+            <div class="live-target" id="liveTarget">same-origin /api/dashboard</div>
+            <div class="live-grid">
+              <div class="live-cell"><span>명령 출처</span><b id="liveSource">—</b></div>
+              <div class="live-cell"><span>전달 상태</span><b id="liveDelivery">—</b></div>
+              <div class="live-cell"><span>ZONE2</span><b id="liveZone2">—</b></div>
+              <div class="live-cell"><span>ZONE99</span><b id="liveZone99">—</b></div>
+            </div>
+            <div class="live-foot" id="liveFoot">이 페이지를 /logic에서 열면 같은 서버의 API 상태를 표시합니다. 제어 명령은 보내지 않습니다.</div>
+          </aside>
+        </div>
+      </section>
+
+      <div class="notice" role="note">
+        <div class="notice-icon">⚠</div>
+        <div>
+          <strong>이 페이지는 안전 설계와 검증 절차를 설명하며, 연결된 장비의 현재 상태를 보증하지 않습니다.</strong>
+          <p>운영 소스는 부팅 시 경로 UNKNOWN·Motor status 7(CALIBRATION_REQUIRED)·액추에이터 출력 OFF를 기준으로 출발을 잠급니다. 펌웨어 업로드 여부, 보드별 포트, 실제 출력 상태는 시험을 시작할 때마다 현장에서 다시 확인하고 기록해야 합니다.</p>
+        </div>
+      </div>
+
+      <div class="notice route" role="note">
+        <div class="notice-icon">◎</div>
+        <div>
+          <strong>설계 경로: ZONE2·ZONE99 사이는 연속된 검은 선과 등록 RFID 태그, HOME은 넓은 검은 종점 마커를 사용합니다.</strong>
+          <p>부팅 때는 경로를 UNKNOWN으로 두고, HOME 마커에서 ZONE2 방향으로 놓은 뒤 CALIBRATE_HOME을 완료해야 이동할 수 있습니다. 소스 검사와 SimulIDE 논리 프록시는 상태 전이와 프로토콜만 확인하며, 카드 판독 거리·라인 극성·제동 거리·고전력 부하는 실제 장비에서 별도로 검증합니다.</p>
+        </div>
+      </div>
+
+      <section class="section" id="architecture">
+        <div class="section-head">
+          <div><div class="section-index">01 · Architecture</div><h2>전체 구성과 역할 분리</h2></div>
+          <p class="section-desc">서버는 판단과 우선순위를 담당하고, 자동차의 SensorUno가 실시간 안전 판단과 두 하위 Uno의 실행을 조율합니다. 구역 센싱은 자동차와 독립적으로 계속됩니다.</p>
+        </div>
+        <div class="panel panel-pad">
+          <div class="architecture">
+            <div class="arch-group">
+              <article class="arch-node">
+                <span class="arch-label">Sensing node</span>
+                <h3>ZONE2</h3>
+                <p>DHT11/22 + ESP-01/CP2102<br>온·습도 주기 전송</p>
+              </article>
+              <article class="arch-node">
+                <span class="arch-label">Sensing node</span>
+                <h3>ZONE99</h3>
+                <p>DHT11/22 + ESP-01/CP2102<br>자동차와 독립 감지</p>
+              </article>
+            </div>
+            <div class="arch-arrow" aria-hidden="true">→</div>
+            <article class="arch-node server">
+              <span class="arch-label">Decision layer</span>
+              <h3>Python + MySQL 서버</h3>
+              <p>임계값 판정, 지속시간·초과 폭 기반 우선순위, 임무 revision, ACK, 이력과 관제 UI를 관리합니다.</p>
+              <span class="address">&lt;SERVER_HOST&gt;:&lt;SERVER_PORT&gt;</span>
+            </article>
+            <div class="arch-arrow" aria-hidden="true">⇄</div>
+            <div>
+              <article class="arch-node primary">
+                <span class="arch-label">Robot coordinator</span>
+                <h3>SensorUno</h3>
+                <p>ESP-01, 초음파, RC522, DHT22, 경로 상태와 I2C 마스터를 담당하고, LCD용 10바이트 온·습도/상태 telemetry를 만듭니다.</p>
+                <span class="address">Wi-Fi ⇄ Server · I2C master</span>
+              </article>
+              <div class="branch">
+                <article class="arch-node">
+                  <span class="arch-label">0x08</span>
+                  <h3>MotorUno</h3>
+                  <p>연속 검은 선 추종, 좌·우 단일 모터 2WD, 정지 명령과 로컬 watchdog</p>
+                </article>
+                <article class="arch-node">
+                  <span class="arch-label">0x09</span>
+                  <h3>ActuatorUno</h3>
+                  <p>가습·펠티어·팬 릴레이와 LCD 표시. 릴레이 안전 제어와 LCD 오류를 분리</p>
+                </article>
+                <article class="arch-node">
+                  <span class="arch-label">D5/D4 · 0x27 → 0x3F</span>
+                  <h3>LCD1602</h3>
+                  <p>ActuatorUno의 별도 software I2C에서 자동차 DHT22 값, 현재 단계와 목표 구역 표시</p>
+                </article>
+              </div>
+            </div>
+          </div>
+          <div class="protocol-strip">
+            <div class="protocol-item"><span>구역 → 서버</span><b>HTTP 온·습도 전송</b></div>
+            <div class="protocol-item"><span>서버 ⇄ 자동차</span><b>폴링 + 상태 ACK</b></div>
+            <div class="protocol-item"><span>Sensor → Motor</span><b>2B command + sequence</b></div>
+            <div class="protocol-item"><span>Motor → Sensor</span><b>3B status + echo</b></div>
+            <div class="protocol-item"><span>Sensor → Actuator</span><b>4B magic + seq + command + CRC</b></div>
+            <div class="protocol-item"><span>Actuator → Sensor</span><b>6B status + exact ACK + CRC</b></div>
+            <div class="protocol-item"><span>Sensor → Actuator</span><b>10B display telemetry</b></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="flow">
+        <div class="section-head">
+          <div><div class="section-index">02 · Main flow</div><h2>감지부터 복귀까지</h2></div>
+          <p class="section-desc">한 번의 모듈 동작으로 끝내지 않고, 서버의 최신 센서 판정과 로봇 보고를 계속 주고받으면서 다음 행동을 결정합니다.</p>
+        </div>
+        <div class="flow">
+          <article class="flow-card"><h3>상시 센싱</h3><p>ZONE2·ZONE99 노드가 자동차 상태와 관계없이 온·습도를 계속 서버로 보냅니다.</p><span class="mini">DHT → ESP-01 → /api/readings</span></article>
+          <article class="flow-card"><h3>이상 판정</h3><p>서버가 온도·습도와 45초 데이터 신선도를 확인합니다. 습도 위반 해제에는 2% hysteresis를 적용하고, 이상 후보가 없더라도 센서가 stale이면 ALL_STOP입니다.</p><span class="mini">NORMAL · ERROR_LOW · ERROR_HIGH · STALE</span></article>
+          <article class="flow-card"><h3>목표 선정</h3><p>동시 위반이면 임계값 초과 폭과 지속시간으로 우선순위를 계산해 하나의 TASK와 revision을 만듭니다.</p><span class="mini">target_zone + action + revision</span></article>
+          <article class="flow-card"><h3>HOME 기준 동기화</h3><p>부팅 경로는 UNKNOWN입니다. HOME 마커에서 ZONE2 방향으로 놓고 CALIBRATE_HOME을 완료하기 전에는 TASK·RETURN·수동 주행을 실행하지 않습니다.</p><span class="mini">HOME_SYNC=6 · REQUIRED=7</span></article>
+          <article class="flow-card"><h3>출동 준비</h3><p>SensorUno가 RC522 VersionReg, I2C 적용 ACK와 경로 방향을 검사한 뒤 출발합니다. 초음파는 현재 모니터 전용입니다.</p><span class="mini">RFID health → Motor frame</span></article>
+          <article class="flow-card"><h3>연속 라인 추종</h3><p>MotorUno는 IR 센서로 끊기지 않은 검은 선을 계속 따라갑니다. SensorUno는 주행 중 RFID 스캔·I2C ACK·keepalive를 우선 처리합니다.</p><span class="mini">LINE FOLLOW + RFID SCAN · 400ms KEEPALIVE</span></article>
+          <article class="flow-card"><h3>RFID 감지·정지</h3><p>예상 역의 UID가 읽히면 SensorUno가 즉시 모터를 정지합니다. 중간 역이면 해당 UID를 중복 억제 상태로 두고 다시 출발하며, 목표 역이면 정차를 유지합니다.</p><span class="mini">RC522 UID → MOTOR STOP → STATION CONFIRM</span></article>
+          <article class="flow-card"><h3>모듈 작동</h3><p>4바이트 sequence+CRC 명령을 보내고 같은 sequence의 RUNNING을 확인합니다. 가습 5초 또는 팬 0.5초→펠티어 5초→팬 2초 뒤 같은 tuple의 DONE만 인정합니다.</p><span class="mini">4B CONTROL ⇄ 6B EXACT ACK</span></article>
+          <article class="flow-card"><h3>재판정</h3><p>모듈 완료 시 서버가 그 구역의 마지막 reading ID를 DB에 소비 처리하고 출력 OFF로 대기합니다. 그 이후 수신된 새 측정도 비정상일 때만 새 revision으로 한 번 더 작동하며, 정상화되면 RETURN_HOME을 만듭니다.</p><span class="mini">DB reading watermark · 새 측정 1건 = 다음 동작 1회</span></article>
+          <article class="flow-card"><h3>복귀·재라우팅</h3><p>HOME으로 복귀하는 중 새 TASK가 생기면 앞쪽 목표는 계속 가고, 뒤쪽 목표는 180도 회전합니다.</p><span class="mini">RETURNING 상태에서도 서버 감지 지속</span></article>
+          <article class="flow-card"><h3>대기 복귀</h3><p>HOME 도착 후 IDLE로 전환하고 9초 HEARTBEAT만 유지합니다. 다음 위반을 기다립니다.</p><span class="mini">IDLE · outputs OFF · online 유지</span></article>
+        </div>
+      </section>
+
+      <section class="section" id="route">
+        <div class="section-head">
+          <div><div class="section-index">03 · Route model</div><h2>직선 3지점 경로</h2></div>
+          <p class="section-desc">데모 트랙은 HOME, ZONE2, ZONE99가 직선으로 놓입니다. ZONE2·ZONE99 구간의 검은 선은 끊기지 않고 바닥 RFID로 역을 구분하며, HOME에만 양쪽 IR이 동시에 읽는 넓은 검은 종점 마커를 둡니다.</p>
+        </div>
+        <div class="route-layout">
+          <div class="panel track">
+            <div class="track-line" aria-label="HOME, ZONE2, ZONE99 순서의 직선 경로">
+              <div class="station"><div class="station-dot">0</div><b>HOME</b><small>넓은 검은 종점 마커</small></div>
+              <div class="station"><div class="station-dot">1</div><b>ZONE2</b><small>연속 선 위 RFID</small></div>
+              <div class="station"><div class="station-dot">2</div><b>ZONE99</b><small>연속 선 위 RFID</small></div>
+            </div>
+            <div class="route-cases">
+              <div class="route-case"><strong>HOME → ZONE99</strong><span>연속 검은 선을 추종하며 ZONE2 카드를 주행 중 읽습니다. 잠시 멈춰 중간 역을 기록한 뒤 같은 방향으로 재출발하고, ZONE99 카드에서 정지해 임무를 시작합니다.</span></div>
+              <div class="route-case"><strong>ZONE99 → HOME</strong><span>180도 회전 후 같은 검은 선을 따라갑니다. ZONE2 카드를 역방향 중간 지점으로 확인한 다음, 양쪽 IR이 HOME의 넓은 검은 종점 마커를 읽으면 정지합니다.</span></div>
+              <div class="route-case"><strong>복귀 중 TASK</strong><span>현재 진행 방향 앞쪽 목표면 그대로 진행하고, 이미 지나온 뒤쪽 목표면 180도 회전 후 재라우팅합니다.</span></div>
+            </div>
+          </div>
+          <aside class="panel panel-pad">
+            <div class="panel-title"><h3>역 확인 규칙</h3><span class="panel-note">route safety</span></div>
+            <div class="route-rules">
+              <div class="rule"><b>RFID가 구역을 확정</b><p>라인센서는 조향에만 사용합니다. RC522가 등록 UID를 읽었을 때만 ZONE2 또는 ZONE99 도착으로 확정합니다.</p></div>
+              <div class="rule"><b>주행 중 반복 스캔</b><p>MOVING·RETURNING에서도 짧은 주기로 카드를 검사합니다. 예상 UID가 감지되면 정지 명령을 우선 전송합니다.</p></div>
+              <div class="rule"><b>중간 역은 재출발</b><p>목표가 아닌 예상 역이면 잠시 정지해 위치를 갱신하고 같은 방향으로 다시 출발합니다. 방금 처리한 UID에는 반복 인식 보호 시간을 적용하고, 180도 회전 중에는 RFID 판독을 보류합니다.</p></div>
+              <div class="rule"><b>HOME만 검은 종점 마커</b><p>정상 복귀는 HOME 방향으로 ZONE2 RFID를 확인한 뒤 만나는 양쪽 IR 동시 검정에서 완료됩니다. ZONE2 태그를 놓쳐도 마커에서 정지해 HOME 위치는 복구하지만, 성공으로 처리하지 않고 <code>FAILED / HOME_RFID_MISSED</code>를 보고합니다. 향후 HOME RFID를 추가하면 위치 확인을 더 명확하게 만들 수 있습니다.</p></div>
+              <div class="rule"><b>재부팅 후 HOME 기준 동기화</b><p>부팅 위치는 UNKNOWN이고 MotorUno는 상태 7입니다. 차량을 HOME 종점에 놓고 ZONE2 방향을 보게 한 뒤 <code>CALIBRATE_HOME</code>을 실행해 명령 6·상태 0의 exact ACK를 받은 다음에만 AUTO로 복귀합니다. 양쪽 IR은 마커만 확인하므로 실제 차체 방향은 사용자가 맞춥니다.</p></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section" id="states">
+        <div class="section-head">
+          <div><div class="section-index">04 · State machine</div><h2>자동차 상태 전이</h2></div>
+          <p class="section-desc">서버 명령, 주행 중 RFID, 모듈 DONE과 구역 습도 정상 판정을 단계별 조건으로 사용합니다. 오류 시 정상 순서를 건너뛰고 안전 정지 상태로 이동합니다.</p>
+        </div>
+        <div class="panel panel-pad">
+          <div class="state-track">
+            <article class="state"><span>IDLE / UNCALIBRATED</span><h3>대기·출발 잠금</h3><p>부팅 직후는 UNKNOWN·status 7·출력 OFF. HOME calibration 뒤에만 HOME IDLE에서 TASK/RETURN_HOME 대기.</p></article>
+            <article class="state"><span>MOVING</span><h3>출동 이동</h3><p>MotorUno 주행, RFID와 I2C 상태, keepalive를 계속 감시. 초음파는 로그만 기록.</p></article>
+            <article class="state"><span>RFID_STOP · 목표</span><h3>역 확인·정지</h3><p>주행 중 읽은 RC522 UID와 expected station을 비교하고 MotorUno STOP을 확인.</p></article>
+            <article class="state"><span>MODULE_RUNNING</span><h3>환경 제어</h3><p>가습 또는 제습 동작. RUNNING 이후 같은 명령의 DONE만 인정.</p></article>
+            <article class="state"><span>TASK_COMPLETE</span><h3>결과 보고</h3><p>서버에 COMPLETED/FAILED와 이벤트를 전송하고 다음 명령 대기.</p></article>
+            <article class="state"><span>RETURNING</span><h3>복귀</h3><p>HOME 방향 이동. 새 임무가 오면 현재 위치·방향으로 재라우팅.</p></article>
+          </div>
+          <div class="exception-row">
+            <div class="exception"><b>ULTRASONIC MONITOR</b><p>현재 데모에서는 거리값과 오류만 기록하며 출발 차단·장애물 PAUSE에는 사용하지 않음.</p></div>
+            <div class="exception"><b>COMMUNICATION FAULT</b><p>I2C ACK, sequence, Wi-Fi 또는 서버 연결 실패 시 모터·액추에이터를 정지하고 FAILED 보고.</p></div>
+            <div class="exception"><b>ROUTE DESYNC</b><p>예상하지 않은 등록 RFID, RFID 이후 잘못된 재출발 또는 주행 timeout은 임무 중단.</p></div>
+            <div class="exception"><b>CALIBRATION REQUIRED</b><p>부팅·Motor 재부팅 뒤 이동 명령은 status 7로 거절. 차량을 HOME에 회수해 ZONE2 방향으로 놓고 다시 동기화.</p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="wiring">
+        <div class="section-head">
+          <div><div class="section-index">05 · Hardware map</div><h2>3 Uno 최종 핀맵</h2></div>
+          <p class="section-desc">탭을 눌러 보드별 배선을 확인할 수 있습니다. 세 Uno의 A4/A5는 0x08/0x09 제어 버스로 공유하고, LCD는 ActuatorUno D5/D4의 별도 software-I2C 버스를 사용합니다. GND는 공유하지만 서로 다른 전원의 + 출력은 직접 묶지 않습니다.</p>
+        </div>
+        <div class="panel panel-pad">
+          <div class="tabs" role="tablist" aria-label="보드 선택">
+            <button class="tab active" type="button" role="tab" aria-selected="true" data-tab="sensor">SensorUno</button>
+            <button class="tab" type="button" role="tab" aria-selected="false" data-tab="motor">MotorUno</button>
+            <button class="tab" type="button" role="tab" aria-selected="false" data-tab="actuator">ActuatorUno</button>
+          </div>
+
+          <div class="tab-panel active" id="tab-sensor" role="tabpanel">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>핀</th><th>연결</th><th>현재 역할 / 주의</th></tr></thead>
+                <tbody>
+                  <tr><td class="pin">D2</td><td>HC-SR04 ECHO</td><td>INT0 비차단 edge 측정</td></tr>
+                  <tr><td class="pin">D3</td><td>HC-SR04 TRIG</td><td>주기적 10µs trigger</td></tr>
+                  <tr><td class="pin">D4</td><td>DHT22 DATA</td><td>자동차 온·습도 측정 후 10바이트 표시 telemetry 생성</td></tr>
+                  <tr><td class="pin">D5</td><td>UNO TX → ESP-01 RX</td><td>ESP 입력은 반드시 3.3V 레벨 분압</td></tr>
+                  <tr><td class="pin">D6</td><td>UNO RX ← ESP-01 TX</td><td><code>SoftwareSerial(6, 5)</code></td></tr>
+                  <tr><td class="pin">D8 / D9</td><td>RC522 SDA(SS) / SCK</td><td rowspan="3">비표준 핀맵이라 프로젝트 내 software-SPI 드라이버 사용. RC522 전원은 3.3V.</td></tr>
+                  <tr><td class="pin">D10 / D11</td><td>RC522 MOSI / MISO</td></tr>
+                  <tr><td class="pin">D12</td><td>RC522 RST</td></tr>
+                  <tr><td class="pin">A4 / A5</td><td>제어 I2C SDA / SCL</td><td>Motor <code>0x08</code>, Actuator <code>0x09</code>만 연결. SensorUno는 LCD를 직접 제어하지 않음.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="tab-motor" role="tabpanel">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>핀 / 출력</th><th>연결</th><th>현재 역할 / 주의</th></tr></thead>
+                <tbody>
+                  <tr><td class="pin">D9 / D10</td><td>왼쪽 / 오른쪽 IR</td><td>연속 검은 선 조향과 HOME 종점 마커 감지. 실제 HIGH/LOW 극성과 좌우 방향은 실차에서 확인.</td></tr>
+                  <tr><td class="pin">A4 / A5</td><td>I2C SDA / SCL</td><td>slave <code>0x08</code>, 2바이트 명령+sequence와 3바이트 적용 ACK. HOME_SYNC=6, CALIBRATION_REQUIRED=7.</td></tr>
+                  <tr><td class="pin">AFMotor M1</td><td>왼쪽 구동 모터 1개</td><td>2WD 왼쪽 바퀴. 방향과 속도는 펌웨어 설정 및 차체 시험으로 조정.</td></tr>
+                  <tr><td class="pin">AFMotor M2</td><td>오른쪽 구동 모터 1개</td><td>2WD 오른쪽 바퀴. 방향과 속도는 펌웨어 설정 및 차체 시험으로 조정.</td></tr>
+                  <tr><td class="pin">Shield pins</td><td>D3/D4/D7/D8/D11/D12</td><td>AFMotor_R4 내부 점유. 외부 센서를 이 핀에 추가하지 않음.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="tab-actuator" role="tabpanel">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>핀</th><th>연결</th><th>현재 역할 / 주의</th></tr></thead>
+                <tbody>
+                  <tr><td class="pin">A0</td><td>가습기 릴레이 IN</td><td>HUMIDIFY에서 5초 ON</td></tr>
+                  <tr><td class="pin">A1</td><td>펠티어 릴레이 IN</td><td>팬 선가동 0.5초 뒤 5초 ON</td></tr>
+                  <tr><td class="pin">D4</td><td>LCD1602 SCL</td><td rowspan="2">LCD 전용 software I2C. <code>0x27</code>을 먼저 찾고 응답이 없으면 <code>0x3F</code> 탐색. A4/A5와 연결하지 않음.</td></tr>
+                  <tr><td class="pin">D5</td><td>LCD1602 SDA</td></tr>
+                  <tr><td class="pin">D7</td><td>냉각팬 릴레이 IN</td><td>펠티어 전 0.5초 ON, 종료 후 2초 추가 냉각</td></tr>
+                  <tr><td class="pin">A4 / A5</td><td>제어 I2C SDA / SCL</td><td>slave <code>0x09</code>, 4바이트 CRC 릴레이 명령·6바이트 exact ACK와 별도 10바이트 표시 telemetry 수신</td></tr>
+                  <tr><td class="pin">Logic</td><td>Active-low relay</td><td>HIGH=OFF, LOW=ON. 부팅·timeout·STOP에서 모두 OFF.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="commands">
+        <div class="section-head">
+          <div><div class="section-index">06 · Command contract</div><h2>서버 명령과 통신 계약</h2></div>
+          <p class="section-desc">수동 명령은 자동 임무를 일시적으로 덮어쓰며, 같은 revision의 ACK가 오기 전에는 다음 수동 명령을 막습니다. ALL_STOP만 안전상 예외입니다. CALIBRATE_HOME은 AUTO 전환이나 구역 TASK와 구분되는 재부팅 안전 동기화 명령입니다.</p>
+        </div>
+        <div class="two-col">
+          <article class="panel panel-pad">
+            <div class="panel-title"><h3>SensorUno가 처리하는 명령</h3><span class="panel-note">server → robot</span></div>
+            <div class="command-grid">
+              <div class="command"><code>TASK</code><p>target_zone과 HUMIDIFY/DEHUMIDIFY를 받아 경로 임무 시작</p></div>
+              <div class="command"><code>CALIBRATE_HOME</code><p>차량이 실제 HOME에 있고 ZONE2 방향을 향한 상태에서 Motor STOP을 먼저 확인하고 Actuator STOP까지 확인한 뒤 HOME_SYNC=6 실행. 양쪽 IR HIGH와 status 0 exact ACK로 위치 기준만 동기화하며 AUTO 전환은 별도</p></div>
+              <div class="command"><code>RETURN_HOME</code><p>현재 위치에서 HOME 경로 시작, 이미 HOME이면 즉시 완료</p></div>
+              <div class="command"><code>ALL_STOP</code><p>모터와 모든 액추에이터를 즉시 OFF하고 IDLE 전환</p></div>
+              <div class="command"><code>MOTOR_FWD</code><p>현재 데모에서는 초음파 차단 없이 수동 라인 주행</p></div>
+              <div class="command"><code>MOTOR_RETURN</code><p>180도 회전 후 반대 방향 라인 주행</p></div>
+              <div class="command"><code>MOTOR_STOP</code><p>MotorUno 정지와 로봇 상태 정리</p></div>
+              <div class="command"><code>ACT_HUMIDIFY</code><p>ActuatorUno 가습 릴레이 단위 시험</p></div>
+              <div class="command"><code>ACT_DEHUMID</code><p>팬 선가동·펠티어·팬 후열 냉각 순서 시험</p></div>
+              <div class="command"><code>ACT_STOP</code><p>ActuatorUno 전체 출력 OFF</p></div>
+              <div class="command"><code>RFID_TEST / I2C_CHECK</code><p>RFID placeholder 및 두 slave 연결 상태 진단</p></div>
+            </div>
+          </article>
+          <article class="panel panel-pad">
+            <div class="panel-title"><h3>HTTP·I2C 데이터 흐름</h3><span class="panel-note">read-only overview</span></div>
+            <div class="api-flow">
+              <div class="api"><b>POST /api/readings</b><span>구역 ID, 온도, 습도 → MySQL 저장·상태 재판정</span></div>
+              <div class="api"><b>GET /api/robot/command</b><span>CALIBRATE_HOME을 포함해 revision, command, target_zone, action의 기존 4필드만 compact JSON으로 반환</span></div>
+              <div class="api"><b>GET /api/robot/status</b><span>phase, event, zone, action, ack_revision, result 보고</span></div>
+              <div class="api"><b>GET /api/dashboard</b><span>관제용 구역·임무·이력·장치 health 스냅샷</span></div>
+              <div class="api"><b>Sensor → Motor: [command, seq]</b><span>2바이트 프레임. 중복 tuple은 재회전 없이 멱등 처리</span></div>
+              <div class="api"><b>Motor → Sensor: [status, command, seq]</b><span>3바이트 적용 ACK. 오래된 상태를 새 명령 성공으로 오인하지 않음</span></div>
+              <div class="api"><b>Sensor → Actuator: [0xA5, seq, command, CRC8]</b><span>A4/A5의 0x09 제어 경로. CRC-8/ATM(poly 0x07) 4바이트 프레임</span></div>
+              <div class="api"><b>Actuator → Sensor: [status, command, appliedSeq, displaySeq, displayFlags, CRC8]</b><span>6바이트 exact ACK. 같은 command·sequence의 RUNNING을 본 뒤 그 tuple의 DONE만 인정</span></div>
+              <div class="api"><b>Sensor → Actuator: 10B display telemetry</b><span>자동차 온도·습도·상태를 고정 프레임으로 전달. Actuator가 D5/D4 LCD에 표시</span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="safety">
+        <div class="section-head">
+          <div><div class="section-index">07 · Safety</div><h2>실차 안전 로직</h2></div>
+          <p class="section-desc">서버가 느리거나 통신이 끊겨도 각 보드가 로컬에서 출력을 끌 수 있도록 계층별 방어를 둡니다.</p>
+        </div>
+        <div class="safety-grid">
+          <article class="safety"><div class="safety-icon">US</div><h3>초음파 모니터 전용</h3><p>현재 빌드는 센서값·ECHO 오류만 기록합니다. 출발 차단과 15cm 장애물 정지는 의도적으로 비활성입니다.</p></article>
+          <article class="safety"><div class="safety-icon">E!</div><h3>ECHO 오류 표시</h3><p>STUCK_HIGH·NO_ECHO·OUT_OF_RANGE를 로그로 구분하되 현재 주행 명령에는 반영하지 않습니다.</p></article>
+          <article class="safety"><div class="safety-icon">2s</div><h3>Motor watchdog</h3><p>SensorUno 명령 또는 KEEPALIVE가 2초간 없으면 MotorUno가 자체적으로 모든 모터를 RELEASE합니다.</p></article>
+          <article class="safety"><div class="safety-icon">RF</div><h3>RFID 순서 검증</h3><p>현재 expected station과 다른 등록 UID는 경로 불일치로 처리해 주행과 모듈을 멈춥니다.</p></article>
+          <article class="safety"><div class="safety-icon">I²C</div><h3>적용 ACK·timeout</h3><p>주소 ACK만 믿지 않습니다. Motor는 2B/3B sequence echo, Actuator는 4B/6B command+sequence+CRC를 확인하며 Wire timeout이면 전체 출력 OFF로 복구합니다.</p></article>
+          <article class="safety"><div class="safety-icon">LCD</div><h3>표시 오류 격리</h3><p>D5/D4 LCD의 무응답·버스 고착·쓰기 실패는 표시 오류와 0x27→0x3F 재탐색으로 처리합니다. A4/A5의 릴레이 상태 머신과 안전 OFF는 독립적으로 유지합니다.</p></article>
+          <article class="safety"><div class="safety-icon">TAG</div><h3>RFID 정지 우선</h3><p>등록 UID 감지 시 주행 명령보다 STOP을 우선하고 적용 ACK를 확인합니다. 태그가 사라지기 전에는 같은 역을 중복 처리하지 않습니다.</p></article>
+          <article class="safety"><div class="safety-icon">HM</div><h3>HOME 마커 조건</h3><p>복귀 방향에서 ZONE2 RFID까지 확인한 뒤의 양쪽 IR 동시 검정만 정상 완료입니다. 중간 태그가 누락된 경우에도 마커에서 정지하고 위치를 HOME으로 복구하되, 누락 실패를 보고해 재점검하게 합니다.</p></article>
+          <article class="safety"><div class="safety-icon">CAL</div><h3>재부팅 출발 인터록</h3><p>재부팅 뒤 route=UNKNOWN·Motor status=7에서 이동을 막고, HOME 배치 후 CALIBRATE_HOME 완료 ACK가 있어야 해제합니다. IR은 차체 방향을 판별하지 못하므로 ZONE2 방향은 사용자가 확인합니다.</p></article>
+          <article class="safety"><div class="safety-icon">5s</div><h3>액추에이터 자동 OFF</h3><p>가습 5초, 제습은 팬 0.5초 선가동·펠티어 5초·팬 2초 후열 냉각입니다. 부팅·STOP·I2C 오류는 모두 OFF입니다.</p></article>
+          <article class="safety"><div class="safety-icon">NET</div><h3>서버 단절 대응</h3><p>진행 중 서버 연결이 끊기면 모터·액추에이터를 정지하고 복구 후 FAILED 이벤트를 보고합니다.</p></article>
+        </div>
+      </section>
+
+      <section class="section" id="verification">
+        <div class="section-head">
+          <div><div class="section-index">08 · Verification</div><h2>검증 범위와 판정 기준</h2></div>
+          <p class="section-desc">소스 검사, SimulIDE 논리 프록시, 실제 장비 시험은 서로 다른 증거입니다. PASS는 실행한 명령과 대상 버전을 함께 기록했을 때 해당 범위에만 적용합니다.</p>
+        </div>
+        <div class="verify-grid">
+          <article class="verify-card">
+            <h3>코드·산출물 검사</h3>
+            <div class="check-list">
+              <div class="check ok"><span class="check-mark">→</span><div><b><code>python scripts\check.py</code></b><small>현재 체크아웃의 서버·통합 테스트와 SimulIDE 정적 검사를 한 번에 실행합니다. 고정된 과거 통과 개수 대신 실행 시각의 결과를 기록합니다.</small></div></div>
+              <div class="check ok"><span class="check-mark">→</span><div><b><code>python simulide\validate_sim2.py</code></b><small><code>simulide/firmware/build-manifest.json</code>의 각 Uno 소스·HEX SHA-256이 현재 파일과 일치하는지 확인합니다. 불일치하면 HEX를 다시 빌드하고 manifest를 갱신합니다.</small></div></div>
+              <div class="check warn"><span class="check-mark">!</span><div><b>컴파일 결과는 빌드별 기록</b><small>보드 코어·라이브러리 버전, Flash/SRAM 사용량, 생성된 HEX의 해시를 함께 보관하고 이 페이지의 고정 수치로 대체하지 않습니다.</small></div></div>
+            </div>
+          </article>
+
+          <article class="verify-card">
+            <h3>SimulIDE 논리 프록시</h3>
+            <div class="check-list">
+              <div class="check ok"><span class="check-mark">→</span><div><b>상태 전이·프로토콜 프록시</b><small>3 Uno 간 명령, ACK, timeout, HOME 보정 및 액추에이터 순서를 논리 신호로 재현합니다.</small></div></div>
+              <div class="check warn"><span class="check-mark">!</span><div><b>물리 장비 증거가 아님</b><small>Wi-Fi·HTTP·RFID RF 성능, 라인센서 광학 특성, 모터 토크·제동, 릴레이·펠티어 전력은 SimulIDE 판정에 포함되지 않습니다.</small></div></div>
+              <div class="check pending"><span class="check-mark">…</span><div><b>시나리오별 결과 기록</b><small>입력 조건, 기대 상태, 실제 논리 출력, manifest SHA-256을 함께 남겨 어떤 산출물을 검사했는지 추적합니다.</small></div></div>
+            </div>
+          </article>
+
+          <article class="verify-card">
+            <h3>하드웨어 확인 항목</h3>
+            <div class="check pending"><span class="check-mark">…</span><div><b>보드 식별·통신</b><small>현장에서 식별한 <code>&lt;SERIAL_PORT&gt;</code>를 보드별로 기록하고 Wi-Fi, Motor 0x08, Actuator 0x09의 응답과 안전 OFF를 확인합니다.</small></div></div>
+            <div class="check pending"><span class="check-mark">…</span><div><b>2WD 주행·역 인식</b><small>좌·우 단일 모터의 방향, IR 극성, 등록 태그 매핑, 카드 높이, 차속, 제동 거리, HOME 종점 정지를 바퀴 공중 시험부터 확인합니다.</small></div></div>
+            <div class="check pending"><span class="check-mark">…</span><div><b>액추에이터 무부하·부하</b><small>LED·멀티미터 무부하 시험을 먼저 수행한 뒤 별도 전원과 보호회로를 확인하고 가습기·팬·펠티어 부하 시험으로 진행합니다.</small></div></div>
+            <div class="check warn" style="margin-top:13px"><span class="check-mark">→</span><div><b>환경별 값을 외부 설정</b><small><code>&lt;SERVER_HOST&gt;</code>, <code>&lt;SERVER_PORT&gt;</code>, <code>&lt;SERIAL_PORT&gt;</code>, <code>&lt;ZONE_TAG_UID&gt;</code>와 자격 증명은 문서나 화면 소스에 실제 값으로 남기지 않습니다.</small></div></div>
+          </article>
+        </div>
+        <div class="legend">
+          <span class="ok"><i></i>실행 가능한 검사</span>
+          <span class="warn"><i></i>주의·재점검</span>
+          <span class="pending"><i></i>실물 시험 대기</span>
+          <span class="fail"><i></i>현재 차단 이슈</span>
+        </div>
+      </section>
+
+      <section class="section" id="test">
+        <div class="section-head">
+          <div><div class="section-index">09 · Safe test order</div><h2>다음 통합 시험 순서</h2></div>
+          <p class="section-desc">고전력 모듈과 모터는 마지막에 연결합니다. 각 단계의 OFF와 ACK가 확인돼야 다음 단계로 넘어갑니다.</p>
+        </div>
+        <div class="test-sequence">
+          <article class="test-step"><span>STEP 01</span><b>전원·ESP 연결 확인</b><p>배선과 3.3V 전원을 확인한 뒤 ESP-01을 재인가하고 AT·Wi-Fi 응답을 기록.</p></article>
+          <article class="test-step"><span>STEP 02</span><b>서버 설정·안전 부팅</b><p><code>&lt;SERVER_HOST&gt;</code> 환경에 검증한 릴리스를 배포하고, Motor status 7/calibrated 0과 Actuator A0/A1/D7 OFF 및 ALL_STOP ACK를 확인.</p></article>
+          <article class="test-step"><span>STEP 03</span><b>HOME 기준 동기화</b><p>차량을 HOME 마커 위에서 ZONE2 방향으로 놓고 CALIBRATE_HOME → status 0/command 6 exact ACK와 HOME_CALIBRATED를 확인.</p></article>
+          <article class="test-step"><span>STEP 04</span><b>바퀴 공중·트랙 시험</b><p>IR 극성·등록 RFID 태그 매핑·연속선 조향·180도 회전·중간 역 재출발·HOME 종점 정지를 확인. 초음파는 로그만 관찰.</p></article>
+          <article class="test-step"><span>STEP 05</span><b>릴레이 무부하 시험</b><p>4B/6B exact ACK와 함께 LED·멀티미터로 A0 5초, D7 선가동→A1 5초→D7 후열 2초를 확인.</p></article>
+          <article class="test-step"><span>STEP 06</span><b>전체 경로 시험</b><p>HOME→ZONE2→ZONE99→HOME, 중간 역과 복귀 중 새 TASK를 순서대로 검증.</p></article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>이 문서는 현재 설계와 검증 경계를 설명합니다. 환경별 주소·포트·태그 UID·자격 증명은 포함하지 않습니다.</span>
+      <div class="footer-links">
+        <a class="button" href="/">관제 화면 열기</a>
+        <a class="button" href="#overview">맨 위로</a>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var tabs = document.querySelectorAll('.tab');
+      tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          tabs.forEach(function (item) {
+            var selected = item === tab;
+            item.classList.toggle('active', selected);
+            item.setAttribute('aria-selected', selected ? 'true' : 'false');
+          });
+          document.querySelectorAll('.tab-panel').forEach(function (panel) {
+            panel.classList.toggle('active', panel.id === 'tab-' + tab.dataset.tab);
+          });
+        });
+      });
+
+      document.getElementById('printButton').addEventListener('click', function () {
+        window.print();
+      });
+
+      var navLinks = Array.prototype.slice.call(document.querySelectorAll('.nav a'));
+      if ('IntersectionObserver' in window) {
+        var observer = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (!entry.isIntersecting) return;
+            navLinks.forEach(function (link) {
+              link.classList.toggle('active', link.getAttribute('href') === '#' + entry.target.id);
+            });
+          });
+        }, { rootMargin: '-20% 0px -68% 0px' });
+        document.querySelectorAll('main section[id]').forEach(function (section) {
+          observer.observe(section);
+        });
+      }
+
+      function zoneText(zone) {
+        if (!zone) return '수신 대기';
+        var humidity = zone.humidity == null ? '—' : Number(zone.humidity).toFixed(1) + '%';
+        return humidity + ' · ' + (zone.state || zone.humidity_state || 'WAITING');
+      }
+
+      function loadLiveSnapshot() {
+        if (location.protocol === 'file:') {
+          document.getElementById('liveStatus').textContent = '정적 파일';
+          document.getElementById('liveFoot').textContent = '실시간 상태는 Python 서버의 /logic 주소에서 확인할 수 있습니다.';
+          return;
+        }
+        fetch('/api/dashboard', { cache: 'no-store' })
+          .then(function (response) {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.json();
+          })
+          .then(function (data) {
+            var command = data.effective_command || data.mission || {};
+            var delivery = data.command_delivery || {};
+            var zones = data.zones || [];
+            document.getElementById('liveStatus').textContent = '읽기 전용 연결';
+            document.getElementById('liveStatus').style.color = 'var(--green)';
+            document.getElementById('liveCommand').textContent = command.command || 'WAITING';
+            document.getElementById('liveTarget').textContent = (command.target_zone || 'HOME') + ' · ' + (command.action || 'NONE') + ' · rev ' + (command.revision == null ? '—' : command.revision);
+            document.getElementById('liveSource').textContent = command.source || (data.manual_control && data.manual_control.enabled ? 'MANUAL' : 'AUTO');
+            document.getElementById('liveDelivery').textContent = delivery.state || 'REGISTERED';
+            document.getElementById('liveZone2').textContent = zoneText(zones.find(function (zone) { return zone.zone_id === 'ZONE2'; }));
+            document.getElementById('liveZone99').textContent = zoneText(zones.find(function (zone) { return zone.zone_id === 'ZONE99'; }));
+            document.getElementById('liveFoot').textContent = '마지막 읽기: ' + new Date().toLocaleTimeString('ko-KR') + ' · 이 페이지는 제어 API를 호출하지 않습니다.';
+          })
+          .catch(function (error) {
+            document.getElementById('liveStatus').textContent = '서버 상태 미수신';
+            document.getElementById('liveStatus').style.color = 'var(--yellow)';
+            document.getElementById('liveFoot').textContent = '문서는 정상 표시됩니다. 실시간 API: ' + error.message;
+          });
+      }
+
+      loadLiveSnapshot();
+      window.setInterval(loadLiveSnapshot, 5000);
+    }());
+  </script>
+</body>
+</html>

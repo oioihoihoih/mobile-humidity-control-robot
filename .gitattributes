@@ -1,0 +1,16 @@
+* text=auto
+
+*.ino text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.sim2 text eol=lf
+*.ps1 text eol=crlf
+
+*.hex -text
+*.png -text
+*.zip -text
+*.tar -text

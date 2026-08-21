@@ -1,0 +1,197 @@
+<circuit version="2.0.0-" rev="260501" stepSize="1000000" stepsPS="1000000" NLsteps="100000" reaStep="1000000" animate="1" anicurr="0" ansi="0" width="3600" height="2600" >
+
+<item itemtype="Subcircuit" CircId="Uno-1" mainComp="false" Show_id="true" Show_Val="false" Pos="-650,0" rotation="0" hflip="1" vflip="1" label="SensorUno: server + RFID + HOME calibration proxy" idLabPos="-125,-30" labelrot="0" valLabPos="-16,20" valLabRot="0" Package="1- Board">
+<mainCompProps MainCompId="mega328-109" Package="1- mega328_DIP" Frequency="16 MHz" ForceFreq="true" savePGM="false" Program="firmware/sensor_uno_3uno_proxy/sensor_uno_3uno_proxy.ino.hex" Auto_Load="false" saveEepr="true" MainMcu="false" SerialMon="-1" />
+</item>
+
+<item itemtype="Subcircuit" CircId="Uno-2" mainComp="false" Show_id="true" Show_Val="false" Pos="100,-360" rotation="0" hflip="1" vflip="1" label="MotorUno: I2C slave 0x08 / line proxy" idLabPos="-110,-30" labelrot="0" valLabPos="-16,20" valLabRot="0" Package="1- Board">
+<mainCompProps MainCompId="mega328-109" Package="1- mega328_DIP" Frequency="16 MHz" ForceFreq="true" savePGM="false" Program="firmware/motor_uno_i2c_proxy/motor_uno_i2c_proxy.ino.hex" Auto_Load="false" saveEepr="true" MainMcu="false" SerialMon="-1" />
+</item>
+
+<item itemtype="Subcircuit" CircId="Uno-3" mainComp="false" Show_id="true" Show_Val="false" Pos="100,360" rotation="0" hflip="1" vflip="1" label="ActuatorUno: 0x09 relay + D5/D4 software-I2C LCD" idLabPos="-145,-30" labelrot="0" valLabPos="-16,20" valLabRot="0" Package="1- Board">
+<mainCompProps MainCompId="mega328-109" Package="1- mega328_DIP" Frequency="16 MHz" ForceFreq="true" savePGM="false" Program="firmware/actuator_uno_i2c_proxy/actuator_uno_i2c_proxy.ino.hex" Auto_Load="false" saveEepr="true" MainMcu="true" SerialMon="-1" />
+</item>
+
+<item itemtype="SerialTerm" CircId="Serial-Sensor" mainComp="false" Show_id="true" Show_Val="false" Pos="-650,680" rotation="0" hflip="1" vflip="1" label="SensorUno route log / command input (115200)" idLabPos="-125,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Baudrate="115200 _Bd" DataBits="8 _bits" StopBits="1 _bits" SerialMon="false" />
+
+<item itemtype="SerialTerm" CircId="Serial-Motor" mainComp="false" Show_id="true" Show_Val="false" Pos="500,-360" rotation="0" hflip="1" vflip="1" label="MotorUno log (9600)" idLabPos="-65,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Baudrate="9600 _Bd" DataBits="8 _bits" StopBits="1 _bits" SerialMon="false" />
+
+<item itemtype="SerialTerm" CircId="Serial-Actuator" mainComp="false" Show_id="true" Show_Val="false" Pos="500,360" rotation="0" hflip="1" vflip="1" label="ActuatorUno log (9600)" idLabPos="-75,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Baudrate="9600 _Bd" DataBits="8 _bits" StopBits="1 _bits" SerialMon="false" />
+
+<item itemtype="Dht22" CircId="Dht22-Car" mainComp="false" Show_id="true" Show_Val="false" Pos="-350,-250" rotation="0" hflip="1" vflip="1" label="car DHT22: real SensorUno D4" idLabPos="-90,-35" labelrot="0" valLabPos="-16,20" valLabRot="0" DHT22="DHT22" Temp="24 °C" TempInc="0.5 °C" Humi="55 _%" HumiInc="5 _%" />
+
+<item itemtype="Push" CircId="Push-Z2-H" mainComp="false" Show_id="true" Show_Val="false" Pos="-1080,-360" rotation="0" hflip="1" vflip="1" label="SERVER proxy: ZONE2 HUMIDIFY (A0)" idLabPos="-105,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="2" />
+
+<item itemtype="Push" CircId="Push-Z2-D" mainComp="false" Show_id="true" Show_Val="false" Pos="-1080,-270" rotation="0" hflip="1" vflip="1" label="SERVER proxy: ZONE2 DEHUMIDIFY (A1)" idLabPos="-115,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="3" />
+
+<item itemtype="Push" CircId="Push-Z99-H" mainComp="false" Show_id="true" Show_Val="false" Pos="-1080,-180" rotation="0" hflip="1" vflip="1" label="SERVER proxy: ZONE99 HUMIDIFY (A2)" idLabPos="-110,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="9" />
+
+<item itemtype="Push" CircId="Push-Z99-D" mainComp="false" Show_id="true" Show_Val="false" Pos="-1080,-90" rotation="0" hflip="1" vflip="1" label="SERVER proxy: ZONE99 DEHUMIDIFY (A3)" idLabPos="-120,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="0" />
+
+<item itemtype="Push" CircId="Push-Return" mainComp="false" Show_id="true" Show_Val="false" Pos="-1080,20" rotation="0" hflip="1" vflip="1" label="ESP/server proxy: NORMAL / RETURN (D5)" idLabPos="-120,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="r" />
+
+<item itemtype="Push" CircId="Push-Stop" mainComp="false" Show_id="true" Show_Val="false" Pos="-1080,110" rotation="0" hflip="1" vflip="1" label="ESP/server proxy: ALL_STOP (D6)" idLabPos="-100,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="a" />
+
+<item itemtype="Push" CircId="Push-Rfid-Z2" mainComp="false" Show_id="true" Show_Val="false" Pos="-1080,230" rotation="0" hflip="1" vflip="1" label="RFID proxy: ZONE2 (D8)" idLabPos="-78,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="z" />
+
+<item itemtype="Push" CircId="Push-Rfid-Z99" mainComp="false" Show_id="true" Show_Val="false" Pos="-1080,320" rotation="0" hflip="1" vflip="1" label="RFID proxy: ZONE99 (D12)" idLabPos="-85,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="x" />
+
+<item itemtype="Push" CircId="Push-Home" mainComp="false" Show_id="true" Show_Val="false" Pos="-1080,410" rotation="0" hflip="1" vflip="1" label="CALIBRATE_HOME / HOME marker (D13)" idLabPos="-105,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="h" />
+
+<item itemtype="Push" CircId="Push-Line-L" mainComp="false" Show_id="true" Show_Val="false" Pos="220,-590" rotation="0" hflip="1" vflip="1" label="left IR deviation proxy (D9)" idLabPos="-85,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="l" />
+
+<item itemtype="Push" CircId="Push-Line-R" mainComp="false" Show_id="true" Show_Val="false" Pos="410,-590" rotation="0" hflip="1" vflip="1" label="right IR deviation proxy (D10)" idLabPos="-90,-32" labelrot="0" valLabPos="-16,20" valLabRot="0" Norm_Close="false" DT="false" Poles="1" Key="k" />
+
+<item itemtype="Ground" CircId="Ground-Z2-H" mainComp="false" Show_id="false" Show_Val="false" Pos="-1010,-330" rotation="0" hflip="1" vflip="1" label="Ground-Z2-H" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-Z2-D" mainComp="false" Show_id="false" Show_Val="false" Pos="-1010,-240" rotation="0" hflip="1" vflip="1" label="Ground-Z2-D" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-Z99-H" mainComp="false" Show_id="false" Show_Val="false" Pos="-1010,-150" rotation="0" hflip="1" vflip="1" label="Ground-Z99-H" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-Z99-D" mainComp="false" Show_id="false" Show_Val="false" Pos="-1010,-60" rotation="0" hflip="1" vflip="1" label="Ground-Z99-D" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-Return" mainComp="false" Show_id="false" Show_Val="false" Pos="-1010,50" rotation="0" hflip="1" vflip="1" label="Ground-Return" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-Stop" mainComp="false" Show_id="false" Show_Val="false" Pos="-1010,140" rotation="0" hflip="1" vflip="1" label="Ground-Stop" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-Rfid-Z2" mainComp="false" Show_id="false" Show_Val="false" Pos="-1010,260" rotation="0" hflip="1" vflip="1" label="Ground-Rfid-Z2" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-Rfid-Z99" mainComp="false" Show_id="false" Show_Val="false" Pos="-1010,350" rotation="0" hflip="1" vflip="1" label="Ground-Rfid-Z99" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-Home" mainComp="false" Show_id="false" Show_Val="false" Pos="-1010,440" rotation="0" hflip="1" vflip="1" label="Ground-Home" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-Line-L" mainComp="false" Show_id="false" Show_Val="false" Pos="290,-550" rotation="0" hflip="1" vflip="1" label="Ground-Line-L" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-Line-R" mainComp="false" Show_id="false" Show_Val="false" Pos="480,-550" rotation="0" hflip="1" vflip="1" label="Ground-Line-R" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Led" CircId="Led-Motor-LF" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-480" rotation="0" hflip="1" vflip="1" label="left motors FORWARD proxy (D3)" idLabPos="-100,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Green" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="Led" CircId="Led-Motor-RF" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-390" rotation="0" hflip="1" vflip="1" label="right motors FORWARD proxy (D5)" idLabPos="-105,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Green" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="Led" CircId="Led-Motor-LR" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-300" rotation="0" hflip="1" vflip="1" label="left motors REVERSE proxy (D6)" idLabPos="-100,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Orange" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="Led" CircId="Led-Motor-RR" mainComp="false" Show_id="true" Show_Val="false" Pos="760,-210" rotation="0" hflip="1" vflip="1" label="right motors REVERSE proxy (D11)" idLabPos="-105,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Orange" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="Led" CircId="Led-Humidifier" mainComp="false" Show_id="true" Show_Val="false" Pos="760,270" rotation="0" hflip="1" vflip="1" label="humidifier relay proxy (A0)" idLabPos="-85,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Blue" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="Led" CircId="Led-Peltier" mainComp="false" Show_id="true" Show_Val="false" Pos="760,390" rotation="0" hflip="1" vflip="1" label="peltier relay proxy (A1)" idLabPos="-80,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Yellow" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="Led" CircId="Led-Fan" mainComp="false" Show_id="true" Show_Val="false" Pos="760,510" rotation="0" hflip="1" vflip="1" label="cooling fan relay proxy (D7)" idLabPos="-90,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" Color="Green" Grounded="true" Threshold="2.4 V" MaxCurrent="30 mA" Resistance="220 Ω" />
+
+<item itemtype="I2CToParallel" CircId="I2CToParallel-4" mainComp="false" Show_id="false" Show_Val="false" Pos="-228,460" rotation="0" hflip="1" vflip="1" label="I2CToParallel-4" idLabPos="-16,-24" labelrot="0" valLabPos="-16,20" valLabRot="0" invertPins=" " Control_Code="39" Frequency="100 _kHz" />
+
+<item itemtype="Hd44780" CircId="Hd44780-5" mainComp="false" Show_id="true" Show_Val="false" Pos="-296,708" rotation="0" hflip="1" vflip="1" label="Hd44780-5" idLabPos="70,-82" labelrot="0" valLabPos="-16,20" valLabRot="0" Rows="2" Cols="16" />
+
+<item itemtype="Ground" CircId="Ground-LCD-A0" mainComp="false" Show_id="false" Show_Val="false" Pos="-332,500" rotation="0" hflip="1" vflip="1" label="Ground-LCD-A0" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-LCD-A1" mainComp="false" Show_id="false" Show_Val="false" Pos="-364,516" rotation="0" hflip="1" vflip="1" label="Ground-LCD-A1" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Ground" CircId="Ground-LCD-A2" mainComp="false" Show_id="false" Show_Val="false" Pos="-396,532" rotation="0" hflip="1" vflip="1" label="Ground-LCD-A2" idLabPos="-16,8" labelrot="0" valLabPos="-16,20" valLabRot="0" />
+
+<item itemtype="Node" CircId="Node-SDA" mainComp="false" Pos="-160,80" />
+
+<item itemtype="Node" CircId="Node-SCL" mainComp="false" Pos="-80,120" />
+
+<item itemtype="Connector" uid="Connector-I2C-SDA-1" startpinid="Uno-1-A4" endpinid="Node-SDA-0" pointList="-498,24,-160,24,-160,80" />
+
+<item itemtype="Connector" uid="Connector-I2C-SDA-2" startpinid="Node-SDA-1" endpinid="Uno-2-A4" pointList="-160,80,252,80,252,-336" />
+
+<item itemtype="Connector" uid="Connector-I2C-SDA-3" startpinid="Node-SDA-2" endpinid="Uno-3-A4" pointList="-160,80,252,80,252,384" />
+
+<item itemtype="Connector" uid="Connector-I2C-SCL-1" startpinid="Uno-1-A5" endpinid="Node-SCL-0" pointList="-498,16,-80,16,-80,120" />
+
+<item itemtype="Connector" uid="Connector-I2C-SCL-2" startpinid="Node-SCL-1" endpinid="Uno-2-A5" pointList="-80,120,252,120,252,-344" />
+
+<item itemtype="Connector" uid="Connector-I2C-SCL-3" startpinid="Node-SCL-2" endpinid="Uno-3-A5" pointList="-80,120,252,120,252,376" />
+
+<item itemtype="Connector" uid="Connector-Serial-Sensor" startpinid="Uno-1-1" endpinid="Serial-Sensor-pin1" pointList="-642,24,-690,24,-690,688,-672,688" />
+
+<item itemtype="Connector" uid="Connector-Serial-Motor" startpinid="Uno-2-1" endpinid="Serial-Motor-pin1" pointList="108,-336,450,-336,450,-352,476,-352" />
+
+<item itemtype="Connector" uid="Connector-Serial-Actuator" startpinid="Uno-3-1" endpinid="Serial-Actuator-pin1" pointList="108,384,450,384,450,368,476,368" />
+
+<item itemtype="Connector" uid="Connector-Car-DHT" startpinid="Dht22-Car-inPin" endpinid="Uno-1-4" pointList="-354,-218,-500,-218,-500,48,-640,48" />
+
+<item itemtype="Connector" uid="Connector-Z2-H-Input" startpinid="Uno-1-A0" endpinid="Push-Z2-H-pinP0" pointList="-498,56,-1200,56,-1200,-360,-1096,-360" />
+
+<item itemtype="Connector" uid="Connector-Z2-H-Gnd" startpinid="Push-Z2-H-switch0pinN" endpinid="Ground-Z2-H-Gnd" pointList="-1064,-360,-1008,-360,-1008,-344" />
+
+<item itemtype="Connector" uid="Connector-Z2-D-Input" startpinid="Uno-1-A1" endpinid="Push-Z2-D-pinP0" pointList="-498,48,-1180,48,-1180,-268,-1096,-268" />
+
+<item itemtype="Connector" uid="Connector-Z2-D-Gnd" startpinid="Push-Z2-D-switch0pinN" endpinid="Ground-Z2-D-Gnd" pointList="-1064,-270,-1008,-270,-1008,-256" />
+
+<item itemtype="Connector" uid="Connector-Z99-H-Input" startpinid="Uno-1-A2" endpinid="Push-Z99-H-pinP0" pointList="-498,40,-1160,40,-1160,-180,-1096,-180" />
+
+<item itemtype="Connector" uid="Connector-Z99-H-Gnd" startpinid="Push-Z99-H-switch0pinN" endpinid="Ground-Z99-H-Gnd" pointList="-1064,-180,-1008,-180,-1008,-164" />
+
+<item itemtype="Connector" uid="Connector-Z99-D-Input" startpinid="Uno-1-A3" endpinid="Push-Z99-D-pinP0" pointList="-498,32,-1140,32,-1140,-88,-1096,-88" />
+
+<item itemtype="Connector" uid="Connector-Z99-D-Gnd" startpinid="Push-Z99-D-switch0pinN" endpinid="Ground-Z99-D-Gnd" pointList="-1064,-90,-1008,-90,-1008,-76" />
+
+<item itemtype="Connector" uid="Connector-Return-Input" startpinid="Uno-1-5" endpinid="Push-Return-pinP0" pointList="-642,56,-1120,56,-1120,20,-1096,20" />
+
+<item itemtype="Connector" uid="Connector-Return-Gnd" startpinid="Push-Return-switch0pinN" endpinid="Ground-Return-Gnd" pointList="-1064,20,-1008,20,-1008,36" />
+
+<item itemtype="Connector" uid="Connector-Stop-Input" startpinid="Uno-1-6" endpinid="Push-Stop-pinP0" pointList="-642,64,-1150,64,-1150,112,-1096,112" />
+
+<item itemtype="Connector" uid="Connector-Stop-Gnd" startpinid="Push-Stop-switch0pinN" endpinid="Ground-Stop-Gnd" pointList="-1064,110,-1008,110,-1008,124" />
+
+<item itemtype="Connector" uid="Connector-Rfid-Z2-Input" startpinid="Uno-1-8" endpinid="Push-Rfid-Z2-pinP0" pointList="-642,88,-1170,88,-1170,232,-1096,232" />
+
+<item itemtype="Connector" uid="Connector-Rfid-Z2-Gnd" startpinid="Push-Rfid-Z2-switch0pinN" endpinid="Ground-Rfid-Z2-Gnd" pointList="-1064,230,-1008,230,-1008,244" />
+
+<item itemtype="Connector" uid="Connector-Rfid-Z99-Input" startpinid="Uno-1-12" endpinid="Push-Rfid-Z99-pinP0" pointList="-642,120,-1190,120,-1190,320,-1096,320" />
+
+<item itemtype="Connector" uid="Connector-Rfid-Z99-Gnd" startpinid="Push-Rfid-Z99-switch0pinN" endpinid="Ground-Rfid-Z99-Gnd" pointList="-1064,320,-1008,320,-1008,336" />
+
+<item itemtype="Connector" uid="Connector-Home-Input" startpinid="Uno-1-13" endpinid="Push-Home-pinP0" pointList="-642,128,-1210,128,-1210,412,-1096,412" />
+
+<item itemtype="Connector" uid="Connector-Home-Gnd" startpinid="Push-Home-switch0pinN" endpinid="Ground-Home-Gnd" pointList="-1064,410,-1008,410,-1008,424" />
+
+<item itemtype="Connector" uid="Connector-Line-L-Input" startpinid="Uno-2-9" endpinid="Push-Line-L-pinP0" pointList="108,-264,120,-264,120,-588,204,-588" />
+
+<item itemtype="Connector" uid="Connector-Line-L-Gnd" startpinid="Push-Line-L-switch0pinN" endpinid="Ground-Line-L-Gnd" pointList="236,-590,292,-590,292,-564" />
+
+<item itemtype="Connector" uid="Connector-Line-R-Input" startpinid="Uno-2-10" endpinid="Push-Line-R-pinP0" pointList="108,-256,150,-256,150,-588,396,-588" />
+
+<item itemtype="Connector" uid="Connector-Line-R-Gnd" startpinid="Push-Line-R-switch0pinN" endpinid="Ground-Line-R-Gnd" pointList="426,-590,480,-590,480,-564" />
+
+<item itemtype="Connector" uid="Connector-Motor-LF" startpinid="Uno-2-3" endpinid="Led-Motor-LF-lPin" pointList="108,-320,620,-320,620,-480,744,-480" />
+
+<item itemtype="Connector" uid="Connector-Motor-RF" startpinid="Uno-2-5" endpinid="Led-Motor-RF-lPin" pointList="108,-304,640,-304,640,-388,744,-388" />
+
+<item itemtype="Connector" uid="Connector-Motor-LR" startpinid="Uno-2-6" endpinid="Led-Motor-LR-lPin" pointList="108,-296,660,-296,660,-300,744,-300" />
+
+<item itemtype="Connector" uid="Connector-Motor-RR" startpinid="Uno-2-11" endpinid="Led-Motor-RR-lPin" pointList="108,-248,680,-248,680,-208,744,-208" />
+
+<item itemtype="Connector" uid="Connector-Humidifier" startpinid="Uno-3-A0" endpinid="Led-Humidifier-lPin" pointList="252,416,620,416,620,272,744,272" />
+
+<item itemtype="Connector" uid="Connector-Peltier" startpinid="Uno-3-A1" endpinid="Led-Peltier-lPin" pointList="252,408,650,408,650,392,744,392" />
+
+<item itemtype="Connector" uid="Connector-Fan" startpinid="Uno-3-7" endpinid="Led-Fan-lPin" pointList="108,432,680,432,680,512,744,512" />
+
+<item itemtype="Connector" uid="Connector-LCD-SDA" startpinid="Uno-3-5" endpinid="I2CToParallel-4-in0" pointList="108,416,-176,416,-176,436,-252,436" />
+
+<item itemtype="Connector" uid="Connector-LCD-SCL" startpinid="Uno-3-4" endpinid="I2CToParallel-4-in1" pointList="108,408,-188,408,-188,444,-252,444" />
+
+<item itemtype="Connector" uid="Connector-LCD-A0-Gnd" startpinid="I2CToParallel-4-in2" endpinid="Ground-LCD-A0-Gnd" pointList="-252,476,-332,476,-332,484" />
+
+<item itemtype="Connector" uid="Connector-LCD-A1-Gnd" startpinid="I2CToParallel-4-in3" endpinid="Ground-LCD-A1-Gnd" pointList="-252,484,-364,484,-364,500" />
+
+<item itemtype="Connector" uid="Connector-LCD-A2-Gnd" startpinid="I2CToParallel-4-in4" endpinid="Ground-LCD-A2-Gnd" pointList="-252,492,-396,492,-396,516" />
+
+<item itemtype="Connector" uid="Connector-LCD-RS" startpinid="I2CToParallel-4-out0" endpinid="Hd44780-5-PinRS" pointList="-204,436,-144,436,-144,636,-280,636,-280,716" />
+
+<item itemtype="Connector" uid="Connector-LCD-RW" startpinid="I2CToParallel-4-out1" endpinid="Hd44780-5-PinRW" pointList="-204,444,-132,444,-132,648,-272,648,-272,716" />
+
+<item itemtype="Connector" uid="Connector-LCD-EN" startpinid="I2CToParallel-4-out2" endpinid="Hd44780-5-PinEn" pointList="-204,452,-120,452,-120,660,-264,660,-264,716" />
+
+<item itemtype="Connector" uid="Connector-LCD-D4" startpinid="I2CToParallel-4-out4" endpinid="Hd44780-5-dataPin4" pointList="-204,468,-108,468,-108,672,-224,672,-224,716" />
+
+<item itemtype="Connector" uid="Connector-LCD-D5" startpinid="I2CToParallel-4-out5" endpinid="Hd44780-5-dataPin5" pointList="-204,476,-96,476,-96,684,-216,684,-216,716" />
+
+<item itemtype="Connector" uid="Connector-LCD-D6" startpinid="I2CToParallel-4-out6" endpinid="Hd44780-5-dataPin6" pointList="-204,484,-84,484,-84,696,-208,696,-208,716" />
+
+<item itemtype="Connector" uid="Connector-LCD-D7" startpinid="I2CToParallel-4-out7" endpinid="Hd44780-5-dataPin7" pointList="-204,492,-72,492,-72,708,-200,708,-200,716" />
+
+</circuit>

@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HumiBot Control</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08111f;
+      --panel: #101c2e;
+      --panel-2: #13243a;
+      --line: #213752;
+      --text: #f1f5f9;
+      --muted: #8fa6bf;
+      --cyan: #28d7d0;
+      --blue: #5da9ff;
+      --green: #4ade80;
+      --yellow: #fbbf24;
+      --red: #fb7185;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 10% -10%, rgba(40,215,208,.14), transparent 34rem),
+        radial-gradient(circle at 100% 0%, rgba(93,169,255,.12), transparent 30rem),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, Pretendard, "Noto Sans KR", system-ui, sans-serif;
+    }
+    button, select { font: inherit; }
+    .shell { max-width: 1500px; margin: 0 auto; padding: 24px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 20px; }
+    .brand { display: flex; align-items: center; gap: 13px; }
+    .logo {
+      width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--cyan), var(--blue)); color: #04111d;
+      font-size: 22px; box-shadow: 0 10px 30px rgba(40,215,208,.2);
+    }
+    h1 { margin: 0; font-size: clamp(20px, 2vw, 28px); letter-spacing: -.02em; }
+    .subtitle { margin-top: 3px; color: var(--muted); font-size: 13px; }
+    .top-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+    .logic-link { color:#d8f9f7; text-decoration:none; background:#12253b; border:1px solid var(--line); border-radius:999px; padding:8px 12px; font-size:13px; transition:.15s ease; }
+    .logic-link:hover { border-color:var(--cyan); transform:translateY(-1px); }
+    .server-pill { display: flex; align-items: center; gap: 8px; color: #c9fdf4; background: #0a272a; border: 1px solid #155255; border-radius: 999px; padding: 8px 12px; font-size: 13px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px var(--green); }
+    .grid { display: grid; gap: 16px; }
+    .stats { grid-template-columns: repeat(4, minmax(0,1fr)); margin-bottom: 16px; }
+    .stat, .panel { border: 1px solid var(--line); background: rgba(16,28,46,.92); box-shadow: 0 18px 50px rgba(0,0,0,.18); }
+    .stat { padding: 17px 18px; border-radius: 17px; min-height: 112px; position: relative; overflow: hidden; }
+    .stat::after { content:""; position:absolute; width:90px; height:90px; border-radius:50%; right:-35px; bottom:-45px; background:var(--accent, var(--cyan)); opacity:.09; }
+    .eyebrow { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .stat-value { font-size: 24px; font-weight: 780; margin-top: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .stat-sub { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    .main { grid-template-columns: minmax(0,1.65fr) minmax(340px,.85fr); align-items: start; }
+    .stack { display: grid; gap: 16px; }
+    .panel { border-radius: 18px; overflow: hidden; }
+    .panel-head { padding: 17px 19px 13px; display:flex; justify-content:space-between; align-items:center; gap:12px; border-bottom:1px solid rgba(33,55,82,.72); }
+    .panel-title { font-size: 15px; font-weight: 750; }
+    .panel-note { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .panel-body { padding: 17px 19px; }
+    .zone-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+    .zone-card { border:1px solid var(--line); background:var(--panel-2); border-radius:15px; padding:15px; min-height:158px; position:relative; }
+    .zone-card.focus { border-color:#278d92; box-shadow:inset 0 0 0 1px rgba(40,215,208,.18); }
+    .zone-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .zone-name { font-weight:800; letter-spacing:.03em; }
+    .tag { display:inline-flex; align-items:center; border-radius:999px; padding:4px 8px; font-size:11px; font-weight:750; background:#1c3049; color:#c5d7e8; }
+    .tag.normal { color:#c9fdd8; background:#123521; }
+    .tag.error { color:#ffd5dc; background:#43202b; }
+    .tag.wait { color:#ffe6a6; background:#40351c; }
+    .reading { display:flex; align-items:flex-end; gap:6px; margin:16px 0 10px; }
+    .humidity { font-size:34px; line-height:1; font-weight:800; }
+    .unit { color:var(--muted); font-weight:700; margin-bottom:3px; }
+    .temp { color:#bed0e2; font-size:13px; margin-left:auto; }
+    .range { height:7px; background:#21354d; border-radius:99px; overflow:hidden; }
+    .range > span { display:block; height:100%; border-radius:99px; background:linear-gradient(90deg,var(--cyan),var(--blue)); }
+    .zone-meta { color:var(--muted); display:flex; justify-content:space-between; font-size:11px; margin-top:9px; }
+    .mission { display:grid; grid-template-columns:1fr auto 1fr; gap:12px; align-items:center; }
+    .mission-node { border:1px solid var(--line); border-radius:14px; background:var(--panel-2); padding:14px; }
+    .mission-node strong { display:block; font-size:18px; margin-top:6px; }
+    .arrow { color:var(--cyan); font-size:24px; }
+    .mission-reason { margin-top:12px; padding:11px 12px; border-radius:11px; background:#0b1727; color:var(--muted); font-size:12px; line-height:1.5; word-break:break-word; }
+    .chart-wrap { height:230px; }
+    canvas { width:100%; height:100%; display:block; }
+    .terminal { height:330px; overflow:auto; background:#06101d; color:#c7d7e7; padding:13px; font:12px/1.55 Consolas,"Cascadia Code",monospace; }
+    .log-line { display:grid; grid-template-columns:68px 82px 1fr; gap:8px; padding:2px 0; }
+    .log-time { color:#647b94; }
+    .log-kind { color:var(--blue); font-weight:700; }
+    .log-kind.RFID_CARD, .log-kind.RFID_ARRIVAL { color:#67e8f9; }
+    .log-kind.MOVEMENT { color:#5da9ff; }
+    .log-kind.MODULE { color:#fbbf24; }
+    .log-kind.ERROR { color:var(--red); }
+    .log-kind.RELAY { color:var(--yellow); }
+    .empty { color:var(--muted); padding:18px 0; text-align:center; }
+    .toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .select, .btn { border:1px solid var(--line); background:#12253b; color:var(--text); border-radius:10px; padding:7px 10px; font-size:12px; }
+    .settings-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .setting-group { border:1px solid var(--line); background:var(--panel-2); border-radius:13px; padding:12px; }
+    .setting-group > span { display:block; color:var(--muted); font-size:11px; font-weight:750; margin-bottom:9px; }
+    .range-inputs { display:grid; grid-template-columns:1fr auto 1fr; gap:7px; align-items:center; }
+    .range-inputs em { color:var(--muted); font-style:normal; font-size:11px; }
+    .number-input { width:100%; min-width:0; border:1px solid var(--line); background:#091728; color:var(--text); border-radius:9px; padding:9px; font:700 13px/1 system-ui; outline:none; }
+    .number-input:focus { border-color:var(--cyan); box-shadow:0 0 0 2px rgba(40,215,208,.12); }
+    .settings-actions { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:12px; }
+    .save-status { color:var(--muted); font-size:11px; }
+    .save-status.ok { color:var(--green); }
+    .save-status.error { color:var(--red); }
+    .btn { cursor:pointer; transition:.15s ease; }
+    .btn:hover { border-color:#3e688f; transform:translateY(-1px); }
+    .btn:disabled { cursor:not-allowed; opacity:.55; transform:none; }
+    .btn.primary { background:#0f7779; border-color:#189b9a; color:white; }
+    .btn.warning { background:#5b4515; border-color:#9a741e; color:#ffe4a0; }
+    .btn.danger { background:#592331; border-color:#984055; color:#ffd5dd; }
+    .control-grid { display:grid; gap:13px; }
+    .control-group { border:1px solid var(--line); background:var(--panel-2); border-radius:14px; padding:13px; }
+    .control-group-title { color:#d9e8f5; font-size:12px; font-weight:800; margin-bottom:9px; }
+    .control-row { display:flex; flex-wrap:wrap; gap:7px; }
+    .control-row .select { flex:1 1 105px; min-width:0; }
+    .control-row .btn { flex:1 1 92px; }
+    .control-result { margin-top:11px; padding:10px 11px; border-radius:10px; background:#081625; color:var(--muted); font:11px/1.45 Consolas,monospace; }
+    .control-result.ok { color:#baf7cd; border:1px solid #245d38; }
+    .control-result.error { color:#ffd2da; border:1px solid #6f2c3c; }
+    .control-ack { margin-top:8px; padding:10px 11px; border-radius:10px; background:#081625; color:var(--muted); font:11px/1.45 Consolas,monospace; border:1px solid var(--line); }
+    .control-ack.DELIVERED { color:#c7e4ff; border-color:#315d8a; }
+    .control-ack.ACK_EXECUTING { color:#ffe6a6; border-color:#7b6424; }
+    .control-ack.ACK_COMPLETED, .control-ack.ACKNOWLEDGED { color:#baf7cd; border-color:#245d38; }
+    .control-ack.WAITING_READING { color:#9ff3ef; border-color:#23736f; }
+    .control-ack.ACK_FAILED { color:#ffd2da; border-color:#6f2c3c; }
+    .calibration-warning { margin-top:9px; padding:10px 11px; border:1px solid #765f28; border-radius:10px; background:#2f2816; color:#f6dda0; font-size:11px; line-height:1.5; }
+    .device-list, .event-list { display:grid; gap:9px; }
+    .device, .event { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; border-bottom:1px solid rgba(33,55,82,.65); padding:8px 0 11px; }
+    .device:last-child, .event:last-child { border-bottom:0; }
+    .device-icon { width:34px; height:34px; display:grid; place-items:center; border-radius:10px; background:#172d45; }
+    .item-title { font-size:13px; font-weight:700; }
+    .item-sub { color:var(--muted); font-size:11px; margin-top:3px; }
+    .online { color:var(--green); }
+    .degraded { color:var(--yellow); }
+    .offline { color:var(--muted); }
+    .event-badge { border-radius:8px; background:#193047; padding:5px 7px; color:#bcd5ec; font-size:10px; font-weight:800; }
+    .event-badge.RFID_CARD, .event-badge.RFID_ARRIVAL { background:#123d44; color:#9af3f0; }
+    .event-badge.MOVEMENT { background:#163451; color:#9dcbff; }
+    .event-badge.MODULE { background:#443614; color:#ffe29a; }
+    .event-badge.ERROR { background:#49202d; color:#ffd1db; }
+    .footer { color:#627992; font-size:11px; text-align:center; padding:20px 0 6px; }
+    @media (max-width:1050px) { .stats{grid-template-columns:repeat(2,1fr)} .main{grid-template-columns:1fr} .zone-grid{grid-template-columns:repeat(2,1fr)} }
+    @media (max-width:620px) { .shell{padding:15px} .topbar{align-items:flex-start;flex-direction:column}.stats{grid-template-columns:1fr}.zone-grid{grid-template-columns:1fr}.mission{grid-template-columns:1fr}.arrow{transform:rotate(90deg);text-align:center}.log-line{grid-template-columns:58px 70px 1fr}.settings-grid{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">◈</div>
+        <div><h1>HumiBot Control</h1><div class="subtitle">이동형 제습·가습 로봇 통합 관제</div></div>
+      </div>
+      <div class="top-actions">
+        <a class="logic-link" href="/logic">현재 로직 보기</a>
+        <div class="server-pill"><span class="dot"></span><span id="serverStatus">서버 연결 중</span></div>
+      </div>
+    </header>
+
+    <section class="grid stats">
+      <article class="stat" style="--accent:var(--red)"><div class="eyebrow">System state</div><div class="stat-value" id="systemState">—</div><div class="stat-sub" id="systemSub">데이터 확인 중</div></article>
+      <article class="stat" style="--accent:var(--cyan)"><div class="eyebrow">Robot target</div><div class="stat-value" id="robotTarget">—</div><div class="stat-sub" id="robotAction">명령 대기</div></article>
+      <article class="stat" style="--accent:var(--green)"><div class="eyebrow">Robot Wi-Fi</div><div class="stat-value" id="robotWifiState">확인 중</div><div class="stat-sub" id="robotWifiSub">배터리 자동차 접속 대기</div></article>
+      <article class="stat" style="--accent:var(--blue)"><div class="eyebrow">USB server gateway</div><div class="stat-value" id="serialState">연결 확인</div><div class="stat-sub" id="serialSub">COM 포트 검색 중</div></article>
+    </section>
+
+    <section class="grid main">
+      <div class="stack">
+        <article class="panel">
+          <div class="panel-head"><div><div class="panel-title">센싱 구역</div><div class="panel-note" id="thresholdText">정상 범위 불러오는 중</div></div><span class="tag" id="zoneCount">0 zones</span></div>
+          <div class="panel-body"><div class="zone-grid" id="zoneGrid"><div class="empty">센서 데이터 수신 대기</div></div></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><div><div class="panel-title">습도 추이</div><div class="panel-note">최근 240개 측정값 · 구역별 자동 분리</div></div></div>
+          <div class="panel-body"><div class="chart-wrap"><canvas id="historyChart"></canvas></div></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><div><div class="panel-title">USB 서버 게이트웨이 로그</div><div class="panel-note" id="serialDetail">Uno(1) 시리얼 브리지 준비 중</div></div>
+            <div class="toolbar"><select id="portSelect" class="select"></select><button class="btn primary" id="reconnectBtn">연결 / 재연결</button></div>
+          </div>
+          <div class="terminal" id="terminal"><div class="empty">Arduino 로그 대기 중</div></div>
+        </article>
+      </div>
+
+      <aside class="stack">
+        <article class="panel">
+          <div class="panel-head"><div><div class="panel-title">정상 범위 설정</div><div class="panel-note">저장 즉시 구역 판정과 자동차 임무에 반영</div></div></div>
+          <div class="panel-body">
+            <form id="settingsForm">
+              <div class="settings-grid">
+                <label class="setting-group"><span>온도 정상 범위 (°C)</span><div class="range-inputs"><input class="number-input" id="temperatureMin" type="number" min="-40" max="100" step="0.1" required><em>~</em><input class="number-input" id="temperatureMax" type="number" min="-40" max="100" step="0.1" required></div></label>
+                <label class="setting-group"><span>습도 정상 범위 (%)</span><div class="range-inputs"><input class="number-input" id="humidityMin" type="number" min="0" max="100" step="0.1" required><em>~</em><input class="number-input" id="humidityMax" type="number" min="0" max="100" step="0.1" required></div></label>
+                <label class="setting-group"><span>원격 제어 토큰 (브라우저 세션에만 저장)</span><input class="number-input" id="controlToken" type="password" autocomplete="off" spellcheck="false" placeholder="서버의 CONTROL_API_TOKEN"></label>
+              </div>
+              <div class="settings-actions"><span class="save-status" id="settingsStatus">서버에 영구 저장됩니다.</span><button class="btn primary" type="submit" id="settingsSave">범위 저장</button></div>
+            </form>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><div><div class="panel-title">현재 자동차 임무</div><div class="panel-note" id="missionRevision">revision —</div></div><span class="tag" id="missionStatus">WAITING</span></div>
+          <div class="panel-body">
+            <div class="mission"><div class="mission-node"><span class="eyebrow">현재 위치</span><strong>ROBOT</strong></div><div class="arrow">→</div><div class="mission-node"><span class="eyebrow">목표 구역</span><strong id="missionTarget">HOME</strong></div></div>
+            <div class="mission-reason"><b id="missionAction">NONE</b><br><span id="missionReason">명령을 기다리고 있습니다.</span></div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><div><div class="panel-title">전체 장치 시험 제어</div><div class="panel-note">SensorUno가 다음 Wi-Fi 폴링에서 1회 실행</div></div><span class="tag wait" id="controlMode">AUTO</span></div>
+          <div class="panel-body">
+            <div class="control-grid">
+              <div class="control-group">
+                <div class="control-group-title">RFID 구역 임무</div>
+                <div class="control-row">
+                  <select id="manualZone" class="select"><option value="ZONE2">ZONE2</option><option value="ZONE99">ZONE99</option></select>
+                  <select id="manualAction" class="select"><option value="HUMIDIFY">가습</option><option value="DEHUMIDIFY">제습</option><option value="NONE">이동만</option></select>
+                  <button class="btn primary" data-command="TASK">출동</button>
+                  <button class="btn" data-command="RFID_TEST">RFID 도착 모사</button>
+                </div>
+              </div>
+              <div class="control-group">
+                <div class="control-group-title">MotorUno · 0x08</div>
+                <div class="control-row">
+                  <button class="btn primary" data-command="MOTOR_FWD">라인 주행</button>
+                  <button class="btn warning" data-command="MOTOR_RETURN">복귀 회전</button>
+                  <button class="btn danger" data-command="MOTOR_STOP">모터 정지</button>
+                </div>
+              </div>
+              <div class="control-group">
+                <div class="control-group-title">ActuatorUno · 0x09</div>
+                <div class="control-row">
+                  <button class="btn primary" data-command="ACT_HUMIDIFY">가습기 ON</button>
+                  <button class="btn warning" data-command="ACT_DEHUMID">펠티어+팬 ON</button>
+                  <button class="btn danger" data-command="ACT_STOP">모듈 OFF</button>
+                </div>
+              </div>
+              <div class="control-group">
+                <div class="control-group-title">통신 및 모드</div>
+                <div class="control-row">
+                  <button class="btn" data-command="I2C_CHECK">I2C 장치 확인</button>
+                  <button class="btn warning" data-command="CALIBRATE_HOME">HOME 기준 동기화</button>
+                  <button class="btn" id="autoModeBtn">자동 임무로 복귀</button>
+                  <button class="btn danger" data-command="ALL_STOP">전체 긴급 정지</button>
+                </div>
+                <div class="calibration-warning"><b>재부팅 후 필수:</b> 차량을 HOME의 넓은 검은 마커에 놓고 ZONE2 방향으로 정렬한 뒤 HOME 기준 동기화를 실행하세요. 이 명령은 위치·방향 기준만 설정하며 AUTO 전환이나 구역 출동 TASK가 아닙니다.</div>
+              </div>
+            </div>
+            <div class="control-result" id="controlResult">수동 명령을 선택하면 결과가 여기에 표시됩니다.</div>
+            <div class="control-ack" id="commandAck">서버 등록 및 로봇 확인 상태를 불러오는 중입니다.</div>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><div><div class="panel-title">연결 장치</div><div class="panel-note" id="deviceSummary">구역 센서·자동차·게이트웨이 자동 등록</div></div></div>
+          <div class="panel-body"><div class="device-list" id="deviceList"><div class="empty">장치 검색 중</div></div></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><div><div class="panel-title">자동차 · RFID · 모듈 이벤트</div><div class="panel-note">배터리 자동차가 Wi-Fi로 보고한 상태 기록</div></div></div>
+          <div class="panel-body"><div class="event-list" id="eventList"><div class="empty">이벤트 대기 중</div></div></div>
+        </article>
+      </aside>
+    </section>
+    <footer class="footer">Local control dashboard · <span id="clock">—</span> · 자동 갱신 1초</footer>
+  </main>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const timeText = seconds => seconds ? new Date(seconds * 1000).toLocaleTimeString('ko-KR', {hour12:false}) : '수신 없음';
+    const ageText = (seconds, now) => { if (!seconds) return '수신 없음'; const age=Math.max(0,now-seconds); return age<2?'방금 전':age<60?`${age}초 전`:`${Math.floor(age/60)}분 전`; };
+    const labels = {NORMAL:'정상',ERROR_LOW:'저습도',ERROR_HIGH:'고습도',TEMP_LOW:'저온',TEMP_HIGH:'고온',STALE:'연결 끊김',WAITING:'수신 대기'};
+    const icons = {HUMIDITY_SENSOR:'◌',ROBOT_CONTROLLER:'▣',ROBOT_NETWORK:'⌁',SERVER_GATEWAY:'⌘',EXTERNAL_MODULE:'＋'};
+    const phaseLabels = {UNKNOWN:'상태 확인 중',IDLE:'대기',MOVING:'이동 중',WAITING_RFID:'RFID 도착 확인 대기',MODULE_RUNNING:'모듈 가동 중',TASK_COMPLETE:'임무 완료 대기',RETURNING:'복귀 중'};
+    const colors = ['#28d7d0','#5da9ff','#fbbf24','#fb7185','#a78bfa','#4ade80'];
+    let latestData = null;
+    let lastSerialSequence = -1;
+    let refreshInFlight = false;
+    let controlRequestInFlight = false;
+    const controlTokenKey = 'humidity-rover-control-token';
+    $('controlToken').value = sessionStorage.getItem(controlTokenKey) || '';
+    $('controlToken').addEventListener('change', () => {
+      const token = $('controlToken').value.trim();
+      if(token) sessionStorage.setItem(controlTokenKey, token);
+      else sessionStorage.removeItem(controlTokenKey);
+    });
+
+    function controlHeaders() {
+      const token = $('controlToken').value.trim();
+      return {
+        'Content-Type': 'application/json',
+        ...(token ? {'Authorization': `Bearer ${token}`} : {})
+      };
+    }
+
+    function postJson(path, payload) {
+      return fetch(path, {
+        method: 'POST',
+        headers: controlHeaders(),
+        body: JSON.stringify(payload)
+      });
+    }
+
+    function updateControlButtonAvailability(data=latestData) {
+      const delivery=data?.command_delivery||{};
+      const control=data?.manual_control||{};
+      const pending=control.enabled&&['REGISTERED','DELIVERED'].includes(delivery.state);
+      const allStopLatched=control.enabled&&control.command==='ALL_STOP';
+      document.querySelectorAll('[data-command]').forEach(button=>{
+        const emergency=button.dataset.command==='ALL_STOP';
+        button.disabled=controlRequestInFlight||(!emergency&&(pending||allStopLatched));
+      });
+      $('autoModeBtn').disabled=controlRequestInFlight||pending;
+    }
+
+    function renderZones(data) {
+      $('thresholdText').textContent = `온도 ${data.thresholds.temperature_min}~${data.thresholds.temperature_max} °C · 습도 ${data.thresholds.humidity_min}~${data.thresholds.humidity_max}%`;
+      $('zoneCount').textContent = `${data.zones.length} zones`;
+      $('zoneGrid').innerHTML = data.zones.map(z => {
+        const statusClass = z.state==='NORMAL'?'normal':(z.state==='STALE'||z.state==='WAITING')?'wait':'error';
+        const humidity = z.humidity == null ? '—' : Number(z.humidity).toFixed(1);
+        const width = z.humidity == null ? 0 : Math.max(0,Math.min(100,Number(z.humidity)));
+        const temperatureMark = z.temperature_state && z.temperature_state!=='NORMAL' && z.temperature_state!=='STALE' && z.temperature_state!=='WAITING' ? ` · ${labels[z.temperature_state]||z.temperature_state}` : '';
+        return `<article class="zone-card ${z.zone_id==='ZONE99'?'focus':''}">
+          <div class="zone-top"><span class="zone-name">${esc(z.zone_id)}</span><span class="tag ${statusClass}">${esc(labels[z.state]||z.state)}</span></div>
+          <div class="reading"><span class="humidity">${humidity}</span><span class="unit">%</span><span class="temp">${z.temperature==null?'—':Number(z.temperature).toFixed(1)+' °C'}</span></div>
+          <div class="range"><span style="width:${width}%"></span></div>
+          <div class="zone-meta"><span>${esc(z.action||'NONE')}${esc(temperatureMark)}</span><span>${ageText(z.updated_at,data.server_time)}</span></div>
+        </article>`;
+      }).join('') || '<div class="empty">센서 데이터 수신 대기</div>';
+    }
+
+    function renderMission(data) {
+      const m=data.mission;
+      const control=data.manual_control||{};
+      const effective=data.effective_command||(control.enabled?control:m);
+      $('systemState').textContent=m.system_status;
+      $('systemSub').textContent=m.system_status==='ERROR'?`${m.candidates.length}개 습도 구역 조치 필요`:m.system_status==='WARNING'?`${m.temperature_alert_count||0}개 온도 구역 확인 필요`:m.system_status==='NORMAL'?'모든 구역 정상':'일부 센서 확인 필요';
+      $('robotTarget').textContent=effective.target_zone;
+      const networkPhase=data.robot_network?.phase;
+      const phase=networkPhase&&networkPhase!=='UNKNOWN'?networkPhase:(data.serial?.robot_phase||'UNKNOWN');
+      $('robotAction').textContent=`${effective.action} · ${phaseLabels[phase]||phase}`;
+      $('missionTarget').textContent=effective.target_zone;
+      $('missionAction').textContent=`${effective.command} / ${effective.action}`;
+      $('missionReason').textContent=control.enabled
+        ? (control.command==='CALIBRATE_HOME'
+          ? '재부팅 안전 동기화 중입니다. HOME 위치와 ZONE2 진행 방향만 확정하며 자동 임무나 구역 TASK를 시작하지 않습니다.'
+          : '웹 수동 시험 명령이 자동 임무보다 우선 적용 중입니다.')
+        : m.reason;
+      $('missionRevision').textContent=`revision ${effective.revision} · ${phaseLabels[phase]||phase} · ${timeText(effective.updated_at)}`;
+      $('missionStatus').textContent=m.system_status;
+      $('missionStatus').className=`tag ${m.system_status==='NORMAL'?'normal':m.system_status==='ERROR'?'error':'wait'}`;
+    }
+
+    function renderControl(data) {
+      const control=data.manual_control||{};
+      const allStopLatched=control.enabled&&control.command==='ALL_STOP';
+      const calibrating=control.enabled&&control.command==='CALIBRATE_HOME';
+      $('controlMode').textContent=allStopLatched?'ALL_STOP LATCHED':calibrating?'HOME CALIBRATION':control.enabled?'MANUAL':'AUTO';
+      $('controlMode').className=`tag ${allStopLatched?'error':calibrating?'wait':control.enabled?'error':'normal'}`;
+      const delivery=data.command_delivery||{};
+      const ack=$('commandAck');
+      ack.className=`control-ack ${delivery.state||'REGISTERED'}`;
+      ack.textContent=`${delivery.message||'명령 상태 확인 중'}${delivery.robot_online?'':' · 로봇 오프라인'}`;
+      updateControlButtonAvailability(data);
+    }
+
+    function renderDevices(data) {
+      const devices=data.devices||[];
+      const online=devices.filter(d=>d.online).length;
+      $('deviceSummary').textContent=`온라인 ${online} / 전체 ${devices.length} · 15초 이내 수신 기준`;
+      const robot=data.robot_network||{};
+      $('robotWifiState').textContent=robot.online?'온라인':'오프라인';
+      $('robotWifiSub').textContent=robot.online
+        ? `${phaseLabels[robot.phase]||robot.phase} · ${robot.ip||'ESP-01'} · ${ageText(robot.last_seen||robot.reported_at,data.server_time)}`
+        : `마지막 상태 ${ageText(robot.last_seen||robot.reported_at,data.server_time)}`;
+      $('deviceList').innerHTML=devices.map(d=>`<div class="device">
+        <div class="device-icon">${icons[d.device_type]||'◇'}</div><div><div class="item-title">${esc(d.device_id)}</div><div class="item-sub">${esc(d.device_type)} · ${ageText(d.last_seen,data.server_time)}</div></div>
+        <span class="${d.online?'online':'offline'}">●</span></div>`).join('')||'<div class="empty">등록된 장치가 없습니다.</div>';
+    }
+
+    function renderSettings(data) {
+      const inputIds=['temperatureMin','temperatureMax','humidityMin','humidityMax'];
+      if (inputIds.includes(document.activeElement?.id)) return;
+      $('temperatureMin').value=data.thresholds.temperature_min;
+      $('temperatureMax').value=data.thresholds.temperature_max;
+      $('humidityMin').value=data.thresholds.humidity_min;
+      $('humidityMax').value=data.thresholds.humidity_max;
+    }
+
+    function renderEvents(data) {
+      const events=(data.events||[]).slice(0,12);
+      $('eventList').innerHTML=events.map(e=>`<div class="event"><span class="event-badge ${esc(e.event_type)}">${esc(e.event_type)}</span><div><div class="item-title">${esc(e.message)}</div><div class="item-sub">${esc(e.source)} · ${timeText(e.received_at)}</div></div><span></span></div>`).join('')||'<div class="empty">RFID를 태그하면 여기에 표시됩니다.</div>';
+    }
+
+    function renderSerial(data) {
+      const s=data.serial||{};
+      const serialConnected=Boolean(s.serial_connected ?? s.connected);
+      const networkReady=Boolean(s.network_ready);
+      const state=$('serialState');
+      let stateText='오프라인', stateClass='offline';
+      if(s.enabled===false){stateText='사용 안 함';}
+      else if(networkReady&&serialConnected){stateText='게이트웨이 정상';stateClass='online';}
+      else if(networkReady){stateText='Wi-Fi 정상';stateClass='online';}
+      else if(serialConnected&&s.wifi_ready){stateText='서버 확인 필요';stateClass='degraded';}
+      else if(serialConnected&&s.esp_ready){stateText='Wi-Fi 연결 중';stateClass='degraded';}
+      else if(serialConnected){stateText='USB만 연결';stateClass='degraded';}
+      state.textContent=stateText;
+      state.className=`stat-value ${stateClass}`;
+      const usbText=serialConnected?`${s.active_port||s.configured_port||'COM'} 연결`:'USB 미연결';
+      const espText=s.esp_ready?'ESP 응답':'ESP 미응답';
+      const wifiText=s.wifi_ready?'Wi-Fi 연결':'Wi-Fi 미연결';
+      $('serialSub').textContent=`${usbText} · ${espText} · ${wifiText}`;
+      const heartbeatText=networkReady?`서버 heartbeat ${ageText(s.last_gateway_heartbeat_at,data.server_time)}`:'서버 heartbeat 없음/만료';
+      const detailError=s.gateway_error||s.error;
+      $('serialDetail').textContent=`Uno(1) ${heartbeatText}${detailError?' · '+detailError:''}`;
+      const select=$('portSelect');
+      const ports=[...new Set([s.configured_port,...(s.available_ports||[])].filter(Boolean))];
+      const previous=select.value;
+      select.innerHTML=ports.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('')||'<option value="">직렬 포트 선택 필요</option>';
+      select.value=ports.includes(previous)?previous:(s.configured_port||ports[0]);
+      const lines=s.lines||[];
+      if (s.sequence===lastSerialSequence) return;
+      lastSerialSequence=s.sequence;
+      const terminal=$('terminal');
+      const atBottom=terminal.scrollHeight-terminal.scrollTop-terminal.clientHeight<45;
+      terminal.innerHTML=lines.map(l=>`<div class="log-line"><span class="log-time">${timeText(l.received_at)}</span><span class="log-kind ${esc(l.type)}">${esc(l.type)}</span><span>${esc(l.message)}${Number(l.repeat_count)>1?` <b>×${Number(l.repeat_count)}</b>`:''}</span></div>`).join('')||'<div class="empty">Arduino 로그 대기 중</div>';
+      if(atBottom||lines.length<5) terminal.scrollTop=terminal.scrollHeight;
+    }
+
+    function drawChart(data) {
+      const canvas=$('historyChart'); const rect=canvas.getBoundingClientRect(); const ratio=window.devicePixelRatio||1;
+      canvas.width=Math.max(1,Math.floor(rect.width*ratio)); canvas.height=Math.max(1,Math.floor(rect.height*ratio));
+      const ctx=canvas.getContext('2d'); ctx.scale(ratio,ratio); const w=rect.width,h=rect.height; ctx.clearRect(0,0,w,h);
+      const pad={l:36,r:12,t:12,b:25}; const pw=w-pad.l-pad.r,ph=h-pad.t-pad.b;
+      ctx.font='11px system-ui'; ctx.strokeStyle='#213752'; ctx.fillStyle='#6f879f'; ctx.lineWidth=1;
+      [0,20,40,60,80,100].forEach(v=>{const y=pad.t+ph-(v/100)*ph;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke();ctx.fillText(String(v),7,y+4)});
+      const low=data.thresholds.low,high=data.thresholds.high;
+      ctx.fillStyle='rgba(40,215,208,.055)'; const yHigh=pad.t+ph-(high/100)*ph,yLow=pad.t+ph-(low/100)*ph;ctx.fillRect(pad.l,yHigh,pw,yLow-yHigh);
+      const points=data.history||[]; if(!points.length){ctx.fillStyle='#8fa6bf';ctx.fillText('측정 이력이 없습니다.',pad.l+12,pad.t+25);return;}
+      const minT=Math.min(...points.map(p=>p.received_at)),maxT=Math.max(...points.map(p=>p.received_at));
+      const zones=[...new Set(points.map(p=>p.zone_id))];
+      zones.forEach((zone,index)=>{const subset=points.filter(p=>p.zone_id===zone);ctx.strokeStyle=colors[index%colors.length];ctx.lineWidth=2;ctx.beginPath();subset.forEach((p,i)=>{const x=pad.l+((p.received_at-minT)/Math.max(1,maxT-minT))*pw;const y=pad.t+ph-(Number(p.humidity)/100)*ph;i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();ctx.fillStyle=colors[index%colors.length];ctx.fillText(zone,pad.l+index*66,h-5)});
+    }
+
+    async function refresh() {
+      if(refreshInFlight) return;
+      refreshInFlight=true;
+      try {
+        const response=await fetch('/api/dashboard',{cache:'no-store'}); if(!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data=await response.json(); latestData=data;
+        $('serverStatus').textContent=`서버 정상 · ${timeText(data.server_time)}`;
+        renderMission(data); renderControl(data); renderZones(data); renderDevices(data); renderEvents(data); renderSerial(data); renderSettings(data); drawChart(data);
+        $('clock').textContent=new Date().toLocaleString('ko-KR');
+      } catch(error) {
+        $('serverStatus').textContent=`연결 오류 · ${error.message}`;
+      } finally {
+        refreshInFlight=false;
+      }
+    }
+    $('reconnectBtn').addEventListener('click',async()=>{
+      $('reconnectBtn').disabled=true; $('reconnectBtn').textContent='연결 중…';
+      try {
+        const response=await postJson('/api/serial/reconnect',{port:$('portSelect').value});
+        if(!response.ok) { const result=await response.json(); throw new Error(result.error||`HTTP ${response.status}`); }
+      } catch(error) {
+        $('serialDetail').textContent=`재연결 실패: ${error.message}`;
+      }
+      finally { setTimeout(()=>{$('reconnectBtn').disabled=false;$('reconnectBtn').textContent='연결 / 재연결';refresh();},900); }
+    });
+    $('settingsForm').addEventListener('submit',async event=>{
+      event.preventDefault();
+      const button=$('settingsSave'); const status=$('settingsStatus');
+      const payload={temperature_min:Number($('temperatureMin').value),temperature_max:Number($('temperatureMax').value),humidity_min:Number($('humidityMin').value),humidity_max:Number($('humidityMax').value)};
+      button.disabled=true; status.className='save-status'; status.textContent='저장 중…';
+      try {
+        const response=await postJson('/api/settings',payload);
+        const result=await response.json();
+        if(!response.ok) throw new Error(result.error||`HTTP ${response.status}`);
+        status.className='save-status ok'; status.textContent='저장 완료 · 판정에 반영됨'; await refresh();
+      } catch(error) {
+        status.className='save-status error'; status.textContent=`저장 실패: ${error.message}`;
+      } finally { button.disabled=false; }
+    });
+
+    async function sendControl(payload, sourceButton) {
+      const resultBox=$('controlResult');
+      controlRequestInFlight=true;
+      updateControlButtonAvailability();
+      resultBox.className='control-result';
+      resultBox.textContent='명령을 서버에 등록하는 중…';
+      try {
+        const response=await postJson('/api/control',payload);
+        const result=await response.json();
+        if(!response.ok) throw new Error(result.error||`HTTP ${response.status}`);
+        const control=result.control;
+        resultBox.className='control-result ok';
+        resultBox.textContent=control.enabled
+          ? `등록 완료 · rev ${control.revision} · ${control.command} · 로봇 폴링 대기`
+          : `자동 모드 복귀 완료 · rev ${control.revision}`;
+        await refresh();
+      } catch(error) {
+        resultBox.className='control-result error';
+        resultBox.textContent=`명령 실패: ${error.message}`;
+      } finally {
+        controlRequestInFlight=false;
+        updateControlButtonAvailability();
+        if(sourceButton) sourceButton.blur();
+      }
+    }
+
+    document.querySelectorAll('[data-command]').forEach(button=>button.addEventListener('click',()=>{
+      const command=button.dataset.command;
+      if(command==='CALIBRATE_HOME'&&!window.confirm('차량이 HOME의 넓은 검은 마커 위에 있고 ZONE2 방향을 향하고 있습니까?\n\n이 명령은 현재 수동/자동 임무를 시작하지 않고 재부팅된 차량의 위치·방향 기준만 동기화합니다.')) return;
+      const payload={mode:'MANUAL',command};
+      if(command==='TASK') {
+        payload.target_zone=$('manualZone').value;
+        payload.action=$('manualAction').value;
+      }
+      sendControl(payload,button);
+    }));
+    $('autoModeBtn').addEventListener('click',()=>{
+      const latched=latestData?.manual_control?.enabled&&latestData.manual_control.command==='ALL_STOP';
+      if(latched&&!window.confirm('전체 긴급 정지가 latch되어 있습니다. 정지를 해제하고 자동 임무로 복귀할까요?')) return;
+      sendControl({mode:'AUTO',confirm_all_stop:Boolean(latched)},$('autoModeBtn'));
+    });
+    window.addEventListener('resize',()=>latestData&&drawChart(latestData));
+    refresh(); setInterval(refresh,1000);
+  </script>
+</body>
+</html>
