@@ -7,6 +7,21 @@ firmware/zone2_esp01_direct/secrets.h
 firmware/zone99_esp01_dht11/secrets.h
 firmware/uno_zone2_rfid_drive_diagnostic/zone2_rfid_drive_config.h
 
+# Local-only Uno diagnostics and retired Uno prototypes. GitHub keeps only the
+# three production Uno sketches under firmware/.
+firmware/i2c_bus_diagnostic/
+firmware/i2c_passive_release/
+firmware/i2c_slave_diagnostic/
+firmware/sensor_bus_release/
+firmware/uno_dht11_esp8266/
+firmware/uno_esp01_at_bridge/
+firmware/uno_esp01_autobaud_diagnostic/
+firmware/uno_motor_power_diagnostic/
+firmware/uno_rc522_diagnostic/
+firmware/uno_sensor_pin_diagnostic/
+firmware/uno_server_gateway_esp01/
+firmware/uno_zone2_rfid_drive_diagnostic/
+
 # Runtime data and local build output
 server/robot.db
 firmware/uno_dht11_esp8266/build/
