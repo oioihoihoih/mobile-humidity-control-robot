@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/oioihoihoih/mobile-humidity-control-robot/actions/workflows/ci.yml/badge.svg)](https://github.com/oioihoihoih/mobile-humidity-control-robot/actions/workflows/ci.yml)
 
-![구르미 관제 대시보드](docs/assets/dashboard-preview.png)
+![구르미 관제 대시보드](<img width="1209" height="857" alt="KakaoTalk_20260821_165934315" src="https://github.com/user-attachments/assets/4f2d216c-7bce-4a28-9f39-45f81a2cef91" />)
 
 _합성 데이터로 렌더링한 관제 UI 예시입니다. 실차 왕복이나 고전력 가습·제습 부하의 성공 증거가 아닙니다._
 
