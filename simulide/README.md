@@ -14,7 +14,7 @@
 [`THREE_UNO_PROXY.md`](THREE_UNO_PROXY.md)에 정리되어 있다. 회로가 세 HEX를
 상대 경로로 읽으므로 `.sim2` 하나만 복사하지 말고 `simulide` 폴더 구조를
 유지한다.
-# 예시 사진
+## 예시 사진
 <img width="1847" height="1021" alt="image" src="https://github.com/user-attachments/assets/99e8d5b6-31c1-48a1-8d2c-f74ea2f5e3f5" />
 
 
