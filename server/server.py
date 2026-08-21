@@ -82,6 +82,9 @@ MYSQL_AUTO_CREATE_DATABASE = os.getenv(
 DB_LOCK = threading.Lock()
 DASHBOARD_PATH = Path(__file__).with_name("dashboard.html")
 SYSTEM_LOGIC_PATH = Path(__file__).with_name("system_logic.html")
+# /app은 같은 /api/dashboard 데이터를 쓰는 휴대폰용 간이 화면이다. 관제
+# 대시보드(/)는 그대로 두고 별도 경로로만 제공한다.
+APP_PATH = Path(__file__).with_name("dashboard_app.html")
 SERIAL_PORT = os.getenv("SERIAL_PORT", "").strip()
 SERIAL_BAUD = int(os.getenv("SERIAL_BAUD", "9600"))
 SERIAL_ENABLED = os.getenv("SERIAL_ENABLED", "0").strip().lower() in {
@@ -2360,23 +2363,23 @@ class Handler(BaseHTTPRequestHandler):
             {"error": "database unavailable", "retryable": True},
         )
 
+    def send_html_file(self, path: Path) -> None:
+        data = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/":
-            data = DASHBOARD_PATH.read_bytes()
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            self.send_html_file(DASHBOARD_PATH)
+        elif path in ("/app", "/app/"):
+            self.send_html_file(APP_PATH)
         elif path in ("/logic", "/logic/"):
-            data = SYSTEM_LOGIC_PATH.read_bytes()
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            self.send_html_file(SYSTEM_LOGIC_PATH)
         elif path == "/api/dashboard":
             try:
                 payload = dashboard()

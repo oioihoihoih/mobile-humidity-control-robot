@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#F0F4F5">
+<title>구르미</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --page:#E7ECEE; --ground:#F0F4F5; --surface:#FFFFFF; --surface-2:#F4F8F9;
+  --line:#DBE3E5; --line-2:#EAF0F1;
+  --ink:#12232A; --ink-2:#48606A; --ink-3:#7C939B;
+  --brand:#0E6572; --on-brand:#FFFFFF; --tint-brand:#E2EEF0;
+  --humid:#2359B4; --dry:#A9550F; --ok:#22764B; --warn:#8E6412; --crit:#AE3A35;
+  --tint-ok:#E9F4EE; --tint-crit:#FBEDEC; --tint-warn:#FAF2E1; --tint-humid:#E6EFFB;
+  --ok-line:#CBE4D7; --crit-line:#F0CFCD; --warn-line:#EDDCB4;
+  --rail:#22333A;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --page:#0A1214; --ground:#101A1D; --surface:#172327; --surface-2:#1C2A2F;
+    --line:#2B3B41; --line-2:#243338;
+    --ink:#E8EFF0; --ink-2:#A8BCC1; --ink-3:#7D939A;
+    --brand:#4EB0BB; --on-brand:#062227; --tint-brand:#123138;
+    --humid:#83B2F2; --dry:#E09758; --ok:#5FC08C; --warn:#D6AB4C; --crit:#E87C73;
+    --tint-ok:#142D26; --tint-crit:#33201F; --tint-warn:#2D2717; --tint-humid:#182A41;
+    --ok-line:#245040; --crit-line:#4C312E; --warn-line:#4A3D20;
+    --rail:#33474E;
+  }
+}
+:root[data-theme="dark"]{
+  --page:#0A1214; --ground:#101A1D; --surface:#172327; --surface-2:#1C2A2F;
+  --line:#2B3B41; --line-2:#243338;
+  --ink:#E8EFF0; --ink-2:#A8BCC1; --ink-3:#7D939A;
+  --brand:#4EB0BB; --on-brand:#062227; --tint-brand:#123138;
+  --humid:#83B2F2; --dry:#E09758; --ok:#5FC08C; --warn:#D6AB4C; --crit:#E87C73;
+  --tint-ok:#142D26; --tint-crit:#33201F; --tint-warn:#2D2717; --tint-humid:#182A41;
+  --ok-line:#245040; --crit-line:#4C312E; --warn-line:#4A3D20;
+  --rail:#33474E;
+}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;display:flex;justify-content:center;background:var(--page);color:var(--ink);
+  font-family:'IBM Plex Sans KR',system-ui,-apple-system,'Malgun Gothic',sans-serif;
+  font-size:14px;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.num{font-family:'Archivo',system-ui,sans-serif;font-variant-numeric:tabular-nums}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+
+.app{width:100%;max-width:420px;height:100dvh;display:flex;flex-direction:column;background:var(--ground);overflow:hidden}
+@media (min-width:560px){.app{border-left:1px solid var(--line);border-right:1px solid var(--line)}}
+.screen{flex:1;overflow-y:auto;padding:max(12px,env(safe-area-inset-top)) 18px 22px;-webkit-overflow-scrolling:touch}
+.tabbar{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);background:var(--surface);
+  padding:8px 6px calc(12px + env(safe-area-inset-bottom))}
+.tab{display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:0;padding:4px 0;color:var(--ink-3);font-size:11px;font-weight:500;cursor:pointer}
+.tab svg{width:22px;height:22px}
+.tab.on{color:var(--brand)}
+
+.apphead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0 14px}
+.apphead b{font-size:19px;font-weight:700;letter-spacing:-.015em}
+.apphead .sub{display:block;margin-top:3px;font-size:12px;color:var(--ink-3)}
+.conn{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);background:var(--surface);
+  border:1px solid var(--line);border-radius:999px;padding:7px 11px;white-space:nowrap}
+.conn i{width:6px;height:6px;border-radius:50%;background:var(--ok);display:inline-block;flex:none}
+.conn.warn i{background:var(--warn)}
+.conn.bad i{background:var(--crit)}
+
+.alert{display:flex;align-items:center;gap:11px;padding:12px 13px;border-radius:15px;margin-bottom:12px;
+  background:var(--tint-crit);border:1px solid var(--crit-line)}
+.alert.warn{background:var(--tint-warn);border-color:var(--warn-line)}
+.alert.calm{background:var(--tint-ok);border-color:var(--ok-line)}
+.alert.plain{background:var(--surface-2);border-color:var(--line)}
+.alert div{flex:1;min-width:0}
+.alert b{display:block;font-size:13px;font-weight:600;color:var(--ink);line-height:1.45}
+.alert span{display:block;margin-top:4px;font-size:12px;color:var(--ink-2);line-height:1.5}
+.alert button{flex:none;border:0;border-radius:10px;background:var(--crit);color:#fff;padding:10px 12px;font-size:12px;font-weight:600;cursor:pointer}
+.alert button:disabled{opacity:.5;cursor:not-allowed}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:20px}
+.map{padding:16px 14px;display:grid;grid-template-columns:54px 1fr;gap:0}
+.rail-col{position:relative}
+.rail{position:absolute;left:50%;width:10px;margin-left:-5px;border-radius:6px;background:var(--rail)}
+.pad{position:absolute;left:50%;width:32px;height:20px;margin-left:-16px;border-radius:7px;background:var(--rail)}
+.mark{position:absolute;left:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:var(--surface);border:2.5px solid var(--rail)}
+.bot{position:absolute;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;background:var(--brand);
+  border:3px solid var(--surface);z-index:2;transition:top .9s cubic-bezier(.4,0,.2,1);box-shadow:0 3px 10px rgba(14,101,114,.35)}
+.bot::after{content:'';position:absolute;left:50%;top:3px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--on-brand)}
+.bot.off{background:var(--ink-3);box-shadow:none;opacity:.65}
+.bot.run::before{content:'';position:absolute;inset:-7px;border-radius:50%;border:2px solid var(--brand);animation:ping 1.9s ease-out infinite}
+@keyframes ping{0%{transform:scale(.75);opacity:.55}100%{transform:scale(1.5);opacity:0}}
+.rooms{display:grid;gap:14px}
+.room{width:100%;text-align:left;cursor:pointer;border:1px solid var(--line);background:var(--surface-2);
+  border-radius:16px;padding:11px 12px;display:flex;flex-direction:column;justify-content:space-between}
+.room.ok{background:var(--tint-ok);border-color:var(--ok-line)}
+.room.crit{background:var(--tint-crit);border-color:var(--crit-line)}
+.room.warn{background:var(--tint-warn);border-color:var(--warn-line)}
+.room.sel{box-shadow:0 0 0 2px var(--brand)}
+.room-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.room-name{font-size:14px;font-weight:600}
+.code{font-size:10px;letter-spacing:.03em;color:var(--ink-3);border:1px solid var(--line);border-radius:5px;padding:2px 5px}
+.read{display:flex;align-items:flex-end;gap:5px}
+.big{font-size:27px;font-weight:700;line-height:.95}
+.unit{font-size:12px;font-weight:600;color:var(--ink-3);padding-bottom:2px}
+.temp{margin-left:auto;font-size:12px;color:var(--ink-2);padding-bottom:2px}
+.band{position:relative;height:6px;border-radius:4px;background:var(--line)}
+.band .ok-zone{position:absolute;top:0;bottom:0;border-radius:4px;background:var(--ok);opacity:.4}
+.band .pin{position:absolute;top:-3px;width:3px;height:12px;margin-left:-1.5px;border-radius:2px;background:var(--ink)}
+.chip{display:inline-flex;align-items:center;font-size:11px;font-weight:600;border-radius:999px;padding:3px 9px}
+.chip.dry{background:var(--tint-warn);color:var(--dry)}
+.chip.humid{background:var(--tint-humid);color:var(--humid)}
+.chip.ok{background:var(--tint-ok);color:var(--ok)}
+.chip.idle{background:var(--surface);color:var(--ink-3);border:1px solid var(--line)}
+
+.sheet{margin-top:13px;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:13px 15px 16px}
+.grab{width:34px;height:4px;border-radius:3px;background:var(--line);margin:0 auto 13px}
+.mission{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.mission b{font-size:16px;font-weight:600;letter-spacing:-.01em}
+.mission .rev{font-size:10.5px;color:var(--ink-3);white-space:nowrap}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:12px}
+.stat{background:var(--surface-2);border:1px solid var(--line-2);border-radius:12px;padding:9px 10px;min-width:0}
+.stat span{display:block;font-size:10px;color:var(--ink-3);margin-bottom:5px}
+.stat b{display:block;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:11px}
+.mode{border:1px solid var(--line);background:var(--surface);border-radius:11px;padding:11px 0;font-size:12.5px;font-weight:600;color:var(--ink-2);cursor:pointer}
+.mode.on{border-color:var(--brand);color:var(--brand);background:var(--tint-brand)}
+.go{margin-top:11px;width:100%;border:0;border-radius:14px;background:var(--brand);color:var(--on-brand);padding:16px 0;font-size:15px;font-weight:600;cursor:pointer}
+.go.stop{background:var(--crit);color:#fff}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
+.ghost{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 0;font-size:13px;font-weight:600;color:var(--ink-2);cursor:pointer}
+.go:disabled,.ghost:disabled,.mode:disabled,.step:disabled{opacity:.45;cursor:not-allowed}
+.result{margin-top:10px;font-size:11.5px;line-height:1.5;color:var(--ink-3)}
+.result.ok{color:var(--ok)}
+.result.bad{color:var(--crit)}
+
+.sec-title{margin:18px 3px 9px;font-size:11.5px;font-weight:600;color:var(--ink-3)}
+.list{background:var(--surface);border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.li{display:flex;align-items:center;gap:11px;padding:13px 15px;border-top:1px solid var(--line-2)}
+.li:first-child{border-top:0}
+.li .grow{flex:1;min-width:0}
+.li b{display:block;font-size:13px;font-weight:600;line-height:1.45}
+.li span{display:block;margin-top:3px;font-size:11.5px;color:var(--ink-3);line-height:1.45}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none}
+.dot.off{background:var(--ink-3);opacity:.45}
+.stepper{display:flex;align-items:center;gap:6px;flex:none}
+.step{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);font-size:16px;font-weight:600;cursor:pointer}
+.value{min-width:62px;text-align:center;font-size:14px;font-weight:600}
+.time{font-size:11px;color:var(--ink-3);flex:none;align-self:flex-start;padding-top:2px}
+.kind{flex:none;font-size:10px;font-weight:600;border-radius:6px;padding:3px 7px;background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line-2);align-self:flex-start}
+.note{margin:10px 4px 0;font-size:11.5px;color:var(--ink-3);line-height:1.6}
+.linkrow{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 15px;
+  border:1px solid var(--line);background:var(--surface);border-radius:18px;margin-top:9px;cursor:pointer;width:100%;text-align:left;text-decoration:none;color:inherit}
+.linkrow b{display:block;font-size:13px;font-weight:600}
+.linkrow span{display:block;margin-top:3px;font-size:11.5px;color:var(--ink-3);line-height:1.45}
+.arrow{color:var(--ink-3);font-size:16px;flex:none}
+details.adv{margin-top:9px;border:1px solid var(--line);background:var(--surface);border-radius:18px;overflow:hidden}
+details.adv > summary{padding:14px 15px;font-size:13px;font-weight:600;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px}
+details.adv > summary::-webkit-details-marker{display:none}
+details.adv > summary::after{content:'＋';color:var(--ink-3);font-size:14px}
+details.adv[open] > summary::after{content:'−'}
+.advbody{padding:0 15px 15px;border-top:1px solid var(--line-2)}
+.advgroup{margin-top:13px}
+.advgroup > span{display:block;font-size:11px;font-weight:600;color:var(--ink-3);margin-bottom:7px}
+.advrow{display:flex;flex-wrap:wrap;gap:6px}
+.advrow .ghost{flex:1 1 96px;padding:11px 6px;font-size:12px}
+.tokenbox{width:100%;margin-top:8px;border:1px solid var(--line);background:var(--surface-2);color:var(--ink);
+  border-radius:11px;padding:11px;font:inherit;font-size:13px}
+.empty{padding:24px 0;text-align:center;color:var(--ink-3);font-size:12.5px}
+@media (prefers-reduced-motion:reduce){.bot{transition:none}.bot.run::before{animation:none}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="screen" id="screen"><div class="empty">서버에 연결하는 중입니다…</div></div>
+  <nav class="tabbar" id="tabbar"></nav>
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  var ROOM_H = 92, ROOM_GAP = 14;
+  var TOKEN_KEY = 'humidity-rover-control-token';   // 기존 관제 대시보드와 같은 키를 쓴다.
+  var NAME_KEY = 'gureumi-zone-names';              // 방 이름은 이 브라우저에만 저장한다.
+
+  var esc = function(v){
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  };
+  var num = function(v, digits){
+    return v == null || v === '' || isNaN(Number(v)) ? null : Number(Number(v).toFixed(digits == null ? 1 : digits));
+  };
+  var timeText = function(sec){
+    return sec ? new Date(sec * 1000).toLocaleTimeString('ko-KR', {hour12:false}) : '수신 없음';
+  };
+  var ageText = function(sec, nowSec){
+    if (!sec) return '수신 없음';
+    var age = Math.max(0, nowSec - sec);
+    return age < 5 ? '방금 전' : age < 60 ? age + '초 전' : Math.floor(age / 60) + '분 전';
+  };
+
+  var PHASE = {
+    UNKNOWN:'상태 확인 중', IDLE:'대기', MOVING:'이동 중', WAITING_RFID:'도착 확인 중',
+    MODULE_RUNNING:'모듈 가동 중', TASK_COMPLETE:'임무 완료', RETURNING:'복귀 중'
+  };
+  var MODE_LABEL = { DEHUMIDIFY:'제습', HUMIDIFY:'가습', NONE:'이동만' };
+  var STATE_LABEL = {
+    NORMAL:'정상', ERROR_LOW:'습도 낮음', ERROR_HIGH:'습도 높음',
+    TEMP_LOW:'온도 낮음', TEMP_HIGH:'온도 높음', STALE:'연결 끊김', WAITING:'수신 대기'
+  };
+  var LEVEL = {
+    NORMAL:'ok', ERROR_LOW:'crit', ERROR_HIGH:'crit',
+    TEMP_LOW:'warn', TEMP_HIGH:'warn', STALE:'idle', WAITING:'idle'
+  };
+
+  var ICON = {
+    home:'<path d="M4 10.4 12 4.2l8 6.2V19a1 1 0 0 1-1 1h-4.2v-5.4H9.2V20H5a1 1 0 0 1-1-1z"/>',
+    zones:'<rect x="3.6" y="3.6" width="7" height="7" rx="1.8"/><rect x="13.4" y="3.6" width="7" height="7" rx="1.8"/><rect x="3.6" y="13.4" width="7" height="7" rx="1.8"/><rect x="13.4" y="13.4" width="7" height="7" rx="1.8"/>',
+    log:'<path d="M4.5 6.5h15M4.5 12h15M4.5 17.5h9"/>',
+    set:'<path d="M4.5 7.5h15M4.5 16.5h15"/><circle cx="9.5" cy="7.5" r="2.4"/><circle cx="15" cy="16.5" r="2.4"/>'
+  };
+  var svg = function(d){
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" '
+      + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+  };
+  var TABS = [
+    {id:'home', label:'홈', icon:ICON.home},
+    {id:'zone', label:'구역', icon:ICON.zones},
+    {id:'log', label:'기록', icon:ICON.log},
+    {id:'set', label:'설정', icon:ICON.set}
+  ];
+
+  var ui = {
+    tab:'home', target:null, mode:'DEHUMIDIFY',
+    busy:false, msg:'', msgKind:'', lastSig:'', lastBotTop:null, connected:false, connError:''
+  };
+  var data = null;
+  var names = {};
+  try { names = JSON.parse(localStorage.getItem(NAME_KEY) || '{}') || {}; } catch (e) { names = {}; }
+
+  var zoneName = function(code){ return names[code] || code; };
+
+  /* ---------- 서버 통신 ---------- */
+
+  function controlHeaders(){
+    var token = '';
+    try { token = sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { token = ''; }
+    var headers = {'Content-Type':'application/json'};
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    return headers;
+  }
+
+  function postJson(path, payload){
+    return fetch(path, {method:'POST', headers:controlHeaders(), body:JSON.stringify(payload)})
+      .then(function(response){
+        return response.json().catch(function(){ return {}; }).then(function(body){
+          if (!response.ok) throw new Error(body.error || ('HTTP ' + response.status));
+          return body;
+        });
+      });
+  }
+
+  function say(text, kind){ ui.msg = text; ui.msgKind = kind || ''; }
+
+  function sendControl(payload, pendingText){
+    ui.busy = true;
+    say(pendingText || '명령을 보내는 중…', '');
+    render(true);
+    return postJson('/api/control', payload).then(function(body){
+      var control = body.control || {};
+      say(control.enabled
+        ? '등록 완료 · rev ' + control.revision + ' · 로봇 폴링 대기'
+        : '자동 임무로 복귀했습니다 · rev ' + control.revision, 'ok');
+    }).catch(function(error){
+      say('명령 실패: ' + error.message, 'bad');
+    }).then(function(){
+      ui.busy = false;
+      return refresh();
+    });
+  }
+
+  var saveTimer = null;
+  function saveThresholds(next){
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(function(){
+      postJson('/api/settings', next).then(function(){
+        say('정상 범위를 저장했습니다.', 'ok');
+      }).catch(function(error){
+        say('범위 저장 실패: ' + error.message, 'bad');
+      }).then(function(){ return refresh(); });
+    }, 450);
+  }
+
+  /* ---------- 데이터 해석 ---------- */
+
+  // HOME → ZONE2 → ZONE99 직선 경로. 구역 번호 오름차순이 곧 HOME에서 먼 순서다.
+  function stopsOf(d){
+    var zones = (d.zones || []).slice().sort(function(a, b){
+      return parseInt(String(a.zone_id).replace(/\D/g, ''), 10) - parseInt(String(b.zone_id).replace(/\D/g, ''), 10);
+    });
+    var stops = [{code:'HOME', zone:null}];
+    zones.forEach(function(z){ stops.push({code:z.zone_id, zone:z}); });
+    return stops;  // HOME이 0번, 가장 먼 구역이 마지막
+  }
+
+  function posOf(stops, code){
+    var index = -1;
+    stops.forEach(function(s, i){ if (s.code === code) index = i; });
+    if (index < 0 || stops.length < 2) return 0;
+    return index / (stops.length - 1);
+  }
+
+  function robotPos(d, stops){
+    var network = d.robot_network || {};
+    var at = posOf(stops, network.zone || 'HOME');
+    var command = d.effective_command || {};
+    var to = network.phase === 'RETURNING' ? 0 : posOf(stops, command.target_zone || 'HOME');
+    if (network.phase === 'MOVING' || network.phase === 'RETURNING') return (at + to) / 2;
+    return at;
+  }
+
+  function isRunning(d){
+    var phase = (d.robot_network || {}).phase;
+    return phase === 'MOVING' || phase === 'RETURNING' || phase === 'MODULE_RUNNING' || phase === 'WAITING_RFID';
+  }
+
+  function pending(d){
+    var delivery = d.command_delivery || {};
+    var control = d.manual_control || {};
+    return Boolean(control.enabled && (delivery.state === 'REGISTERED' || delivery.state === 'DELIVERED'));
+  }
+  function allStopLatched(d){
+    var control = d.manual_control || {};
+    return Boolean(control.enabled && control.command === 'ALL_STOP');
+  }
+
+  /* ---------- 조각 ---------- */
+
+  function band(value, thresholds, level){
+    if (value == null) return '<div class="band"></div>';
+    var clamped = Math.max(0, Math.min(100, value));
+    var pin = level === 'ok' ? 'var(--ok)' : level === 'warn' ? 'var(--warn)' : level === 'crit' ? 'var(--crit)' : 'var(--ink-3)';
+    var low = Number(thresholds.humidity_min), high = Number(thresholds.humidity_max);
+    return '<div class="band" role="img" aria-label="습도 ' + clamped + '퍼센트, 정상 범위 ' + low + '에서 ' + high + '">'
+      + '<span class="ok-zone" style="left:' + low + '%;width:' + Math.max(0, high - low) + '%"></span>'
+      + '<span class="pin" style="left:' + clamped + '%;background:' + pin + '"></span></div>';
+  }
+
+  function mapView(d){
+    var stops = stopsOf(d);
+    var view = stops.slice().reverse();   // 화면 위쪽이 HOME에서 가장 먼 구역
+    var count = view.length;
+    var center = function(i){ return i * (ROOM_H + ROOM_GAP) + ROOM_H / 2; };
+    var first = center(0), last = center(count - 1);
+    var command = d.effective_command || {};
+    var target = ui.target || command.target_zone || 'HOME';
+    var botTop = last - robotPos(d, stops) * (last - first);
+    var running = isRunning(d);
+    var online = Boolean((d.robot_network || {}).online);
+
+    var marks = '';
+    for (var i = 0; i < count - 1; i++) {
+      marks += '<span class="mark" style="top:' + center(i) + 'px"></span>';
+    }
+
+    var rooms = view.map(function(stop){
+      var selected = target === stop.code ? ' sel' : '';
+      if (stop.code === 'HOME') {
+        return '<button class="room' + selected + '" data-act="target" data-code="HOME" style="min-height:' + ROOM_H + 'px">'
+          + '<div class="room-top"><span class="room-name">대기 자리</span><span class="code mono">HOME</span></div>'
+          + '<div style="font-size:12px;color:var(--ink-2);line-height:1.5">넓은 검은 마커 · 방향 기준점<br>'
+          + '보정은 설정 탭에서 실행합니다</div></button>';
+      }
+      var zone = stop.zone;
+      var level = LEVEL[zone.state] || 'idle';
+      var humidity = num(zone.humidity), temperature = num(zone.temperature);
+      return '<button class="room ' + level + selected + '" data-act="target" data-code="' + esc(zone.zone_id) + '" style="min-height:' + ROOM_H + 'px">'
+        + '<div class="room-top"><span class="room-name">' + esc(zoneName(zone.zone_id)) + '</span>'
+        + '<span class="code mono">' + esc(zone.zone_id) + '</span></div>'
+        + '<div class="read"><span class="big num">' + (humidity == null ? '—' : humidity.toFixed(1)) + '</span>'
+        + '<span class="unit">%</span>'
+        + '<span class="temp num">' + (temperature == null ? '—' : temperature.toFixed(1) + ' °C') + '</span></div>'
+        + band(humidity, d.thresholds, level) + '</button>';
+    }).join('');
+
+    return '<section class="card map">'
+      + '<div class="rail-col" aria-hidden="true">'
+      + '<span class="rail" style="top:' + first + 'px;height:' + (last - first) + 'px"></span>'
+      + '<span class="pad" style="top:' + (last - 10) + 'px"></span>'
+      + marks
+      + '<span class="bot' + (running ? ' run' : '') + (online ? '' : ' off') + '" data-bot="1" style="top:'
+      + (ui.lastBotTop == null ? botTop : ui.lastBotTop) + 'px" data-top="' + botTop + '"></span>'
+      + '</div><div class="rooms">' + rooms + '</div></section>';
+  }
+
+  /* ---------- 화면 ---------- */
+
+  function header(d, title, sub){
+    var network = d && d.robot_network || {};
+    var cls = 'conn', label = '연결됨';
+    if (!ui.connected) { cls = 'conn bad'; label = '서버 끊김'; }
+    else if (!network.online) { cls = 'conn warn'; label = '로봇 오프라인'; }
+    return '<header class="apphead"><div><b>' + esc(title) + '</b><span class="sub">' + esc(sub) + '</span></div>'
+      + '<span class="' + cls + '"><i></i>' + label + '</span></header>';
+  }
+
+  function homeScreen(d){
+    var command = d.effective_command || {};
+    var control = d.manual_control || {};
+    var delivery = d.command_delivery || {};
+    var network = d.robot_network || {};
+    var target = ui.target || command.target_zone || 'HOME';
+    var busy = ui.busy || pending(d);
+    var latched = allStopLatched(d);
+
+    var banner;
+    if (latched) {
+      banner = '<div class="alert"><div><b>전체 긴급 정지가 걸려 있습니다.</b>'
+        + '<span>해제해야 자동 임무와 구역 출동이 다시 동작합니다.</span></div>'
+        + '<button data-act="auto"' + (ui.busy ? ' disabled' : '') + '>해제</button></div>';
+    } else {
+      var bad = (d.zones || []).filter(function(z){ return LEVEL[z.state] === 'crit'; });
+      var warn = (d.zones || []).filter(function(z){ return LEVEL[z.state] === 'warn'; });
+      var idle = (d.zones || []).filter(function(z){ return LEVEL[z.state] === 'idle'; });
+      if (bad.length) {
+        var z = bad[0];
+        var action = z.action === 'HUMIDIFY' || z.action === 'DEHUMIDIFY' ? z.action : 'DEHUMIDIFY';
+        banner = '<div class="alert"><div><b>' + esc(zoneName(z.zone_id)) + ' ' + esc(STATE_LABEL[z.state] || z.state)
+          + ' · ' + (num(z.humidity) == null ? '—' : num(z.humidity).toFixed(1)) + '%</b>'
+          + '<span>정상 범위는 ' + esc(d.thresholds.humidity_min) + '–' + esc(d.thresholds.humidity_max) + '% 입니다. '
+          + MODE_LABEL[action] + '이 필요합니다.</span></div>'
+          + '<button data-act="dispatch" data-code="' + esc(z.zone_id) + '" data-mode="' + action + '"'
+          + (busy ? ' disabled' : '') + '>지금 출동</button></div>';
+      } else if (warn.length) {
+        banner = '<div class="alert warn"><div><b>' + esc(zoneName(warn[0].zone_id)) + ' '
+          + esc(STATE_LABEL[warn[0].state] || warn[0].state) + '</b>'
+          + '<span>정상 범위 ' + esc(d.thresholds.temperature_min) + '–' + esc(d.thresholds.temperature_max)
+          + ' °C를 벗어났습니다. 습도는 정상이라 로봇은 움직이지 않습니다.</span></div></div>';
+      } else if (idle.length) {
+        banner = '<div class="alert plain"><div><b>' + esc(zoneName(idle[0].zone_id)) + ' 측정값을 기다리는 중입니다.</b>'
+          + '<span>' + esc(STATE_LABEL[idle[0].state] || idle[0].state) + ' · 센서 노드 전원과 Wi-Fi를 확인하세요.</span></div></div>';
+      } else {
+        banner = '<div class="alert calm"><div><b>모든 구역이 정상입니다.</b>'
+          + '<span>습도 ' + esc(d.thresholds.humidity_min) + '–' + esc(d.thresholds.humidity_max) + '% · 온도 '
+          + esc(d.thresholds.temperature_min) + '–' + esc(d.thresholds.temperature_max) + ' °C</span></div></div>';
+      }
+    }
+
+    var phase = PHASE[network.phase] || network.phase || '상태 확인 중';
+    var missionTitle = command.command === 'TASK' && command.action !== 'NONE'
+      ? esc(zoneName(command.target_zone)) + ' ' + (MODE_LABEL[command.action] || command.action) + ' 임무'
+      : command.command === 'ALL_STOP' ? '정지 상태'
+      : command.target_zone && command.target_zone !== 'HOME' ? esc(zoneName(command.target_zone)) + '로 이동'
+      : '대기 중';
+
+    var goLabel = target === 'HOME' ? 'HOME으로 복귀'
+      : ui.mode === 'NONE' ? esc(zoneName(target)) + '로 이동'
+      : esc(zoneName(target)) + ' ' + MODE_LABEL[ui.mode] + ' 시작';
+
+    return header(d, '구르미', (d.zones || []).map(function(z){ return zoneName(z.zone_id); }).join(' · ') + ' 습도 관리')
+      + banner
+      + mapView(d)
+      + '<section class="sheet">'
+      + '<div class="grab"></div>'
+      + '<div class="mission"><b>' + missionTitle + '</b>'
+      + '<span class="rev mono">' + esc(command.source || 'AUTO') + ' · rev ' + esc(command.revision) + '</span></div>'
+      + '<div class="stats">'
+      + '<div class="stat"><span>목표</span><b>' + esc(zoneName(command.target_zone || 'HOME')) + '</b></div>'
+      + '<div class="stat"><span>작업</span><b>' + esc(MODE_LABEL[command.action] || command.action || '없음') + '</b></div>'
+      + '<div class="stat"><span>상태</span><b>' + esc(phase) + '</b></div>'
+      + '</div>'
+      + '<div class="modes">'
+      + ['DEHUMIDIFY','HUMIDIFY','NONE'].map(function(m){
+          return '<button class="mode' + (ui.mode === m ? ' on' : '') + '" data-act="mode" data-mode="' + m + '"'
+            + (busy ? ' disabled' : '') + '>' + MODE_LABEL[m] + '</button>';
+        }).join('')
+      + '</div>'
+      + '<button class="go" data-act="go"' + (busy ? ' disabled' : '') + '>' + goLabel + '</button>'
+      + '<div class="row2">'
+      + '<button class="ghost" data-act="' + (control.enabled ? 'auto' : 'return') + '"' + (ui.busy ? ' disabled' : '') + '>'
+      + (control.enabled ? '자동 임무로 복귀' : 'HOME 복귀') + '</button>'
+      + '<button class="ghost" data-act="estop">긴급 정지</button></div>'
+      + '<div class="result' + (ui.msgKind ? ' ' + ui.msgKind : '') + '">'
+      + esc(ui.msg || delivery.message || '명령 상태를 불러오는 중입니다.') + '</div>'
+      + '</section>';
+  }
+
+  function zoneScreen(d){
+    var thresholds = d.thresholds;
+    var cards = (d.zones || []).map(function(z){
+      var level = LEVEL[z.state] || 'idle';
+      var humidity = num(z.humidity), temperature = num(z.temperature);
+      var action = z.action === 'HUMIDIFY' || z.action === 'DEHUMIDIFY' ? z.action : 'NONE';
+      var chip = action === 'DEHUMIDIFY' ? '<span class="chip dry">제습 필요</span>'
+        : action === 'HUMIDIFY' ? '<span class="chip humid">가습 필요</span>'
+        : level === 'ok' ? '<span class="chip ok">정상</span>'
+        : '<span class="chip idle">' + esc(STATE_LABEL[z.state] || z.state) + '</span>';
+      return '<section class="card" style="padding:16px;margin-bottom:11px">'
+        + '<div class="room-top" style="margin-bottom:12px">'
+        + '<span class="room-name" style="font-size:16px">' + esc(zoneName(z.zone_id)) + '</span>'
+        + '<span class="code mono">' + esc(z.zone_id) + '</span></div>'
+        + '<div class="read" style="margin-bottom:10px">'
+        + '<span class="big num" style="font-size:40px">' + (humidity == null ? '—' : humidity.toFixed(1)) + '</span>'
+        + '<span class="unit" style="font-size:15px">%</span>'
+        + '<span class="temp num" style="font-size:13px">' + (temperature == null ? '—' : temperature.toFixed(1) + ' °C') + '</span></div>'
+        + band(humidity, thresholds, level)
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:13px">' + chip
+        + '<span style="font-size:11.5px;color:var(--ink-3)">' + esc(ageText(z.updated_at, d.server_time)) + ' 수신</span></div>'
+        + '<button class="ghost" data-act="dispatch" data-code="' + esc(z.zone_id) + '" data-mode="'
+        + (action === 'NONE' ? 'NONE' : action) + '" style="width:100%;margin-top:13px"'
+        + (ui.busy || pending(d) ? ' disabled' : '') + '>'
+        + (action === 'NONE' ? '여기로 이동' : '여기로 출동해 ' + MODE_LABEL[action]) + '</button>'
+        + '<button class="ghost" data-act="rename" data-code="' + esc(z.zone_id) + '" style="width:100%;margin-top:7px">이름 바꾸기</button>'
+        + '</section>';
+    }).join('') || '<div class="empty">등록된 구역이 없습니다.</div>';
+
+    return header(d, '구역', '습도 ' + esc(thresholds.humidity_min) + '–' + esc(thresholds.humidity_max)
+      + '% · 온도 ' + esc(thresholds.temperature_min) + '–' + esc(thresholds.temperature_max) + ' °C')
+      + cards
+      + '<div class="note">이름은 이 브라우저에만 저장됩니다. 로봇과 서버에는 ZONE 코드가 그대로 전달됩니다.</div>';
+  }
+
+  function logScreen(d){
+    var rows = (d.events || []).slice(0, 20).map(function(e){
+      return '<div class="li"><span class="time mono">' + esc(timeText(e.received_at).slice(0, 5)) + '</span>'
+        + '<div class="grow"><b>' + esc(e.message) + '</b><span>' + esc(e.source) + '</span></div>'
+        + '<span class="kind">' + esc(e.event_type) + '</span></div>';
+    }).join('') || '<div class="empty">기록이 없습니다.</div>';
+    return header(d, '기록', '자동차·RFID·모듈 보고 · 최근 20건')
+      + '<div class="list">' + rows + '</div>'
+      + '<a class="linkrow" href="/"><div><b>시리얼 원문 로그 열기</b>'
+      + '<span>RX/TX 라인, 습도 추이 차트, ACK revision</span></div><span class="arrow">→</span></a>';
+  }
+
+  function setScreen(d){
+    var thresholds = d.thresholds;
+    var busy = ui.busy || pending(d);
+    var token = '';
+    try { token = sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { token = ''; }
+
+    var stepper = function(key, label, value, unit, hint){
+      return '<div class="li"><div class="grow"><b>' + label + '</b><span>' + hint + '</span></div>'
+        + '<div class="stepper"><button class="step" data-act="dec" data-key="' + key + '" aria-label="' + label + ' 낮추기">−</button>'
+        + '<span class="value num">' + esc(value) + unit + '</span>'
+        + '<button class="step" data-act="inc" data-key="' + key + '" aria-label="' + label + ' 높이기">＋</button></div></div>';
+    };
+
+    var devices = (d.devices || []).map(function(device){
+      return '<div class="li"><span class="dot' + (device.online ? '' : ' off') + '"></span>'
+        + '<div class="grow"><b>' + esc(device.device_id) + '</b><span>' + esc(device.device_type) + ' · '
+        + esc(ageText(device.last_seen, d.server_time)) + '</span></div>'
+        + '<span style="font-size:11.5px;color:var(--ink-3)">' + (device.online ? '온라인' : '오프라인') + '</span></div>';
+    }).join('') || '<div class="empty">등록된 기기가 없습니다.</div>';
+
+    var testButton = function(command, label, note){
+      return '<button class="ghost" data-act="cmd" data-command="' + command + '"' + (busy ? ' disabled' : '')
+        + (note ? ' title="' + note + '"' : '') + '>' + label + '</button>';
+    };
+
+    return header(d, '설정', '범위는 저장 버튼 없이 즉시 반영됩니다')
+      + '<div class="sec-title">습도 정상 범위 · 벗어나면 출동합니다</div>'
+      + '<div class="list">'
+      + stepper('humidity_min', '습도 하한', thresholds.humidity_min, '%', '이보다 건조하면 가습')
+      + stepper('humidity_max', '습도 상한', thresholds.humidity_max, '%', '이보다 습하면 제습')
+      + '</div>'
+      + '<div class="sec-title">온도 정상 범위 · 알림만 보냅니다</div>'
+      + '<div class="list">'
+      + stepper('temperature_min', '온도 하한', thresholds.temperature_min, '°C', '로봇은 움직이지 않습니다')
+      + stepper('temperature_max', '온도 상한', thresholds.temperature_max, '°C', '로봇은 움직이지 않습니다')
+      + '</div>'
+      + '<div class="sec-title">기기</div>'
+      + '<div class="list">' + devices + '</div>'
+      + '<div class="sec-title">로봇</div>'
+      + '<button class="linkrow" data-act="calibrate"' + (busy ? ' disabled' : '') + '>'
+      + '<div><b>HOME 기준 동기화</b><span>재부팅 뒤 위치·방향 기준을 맞춥니다. 임무를 시작하지 않습니다.</span></div>'
+      + '<span class="arrow">→</span></button>'
+      + '<details class="adv"><summary>모터 · 릴레이 개별 시험</summary><div class="advbody">'
+      + '<div class="advgroup"><span>MotorUno · 0x08</span><div class="advrow">'
+      + testButton('MOTOR_FWD', '라인 주행') + testButton('MOTOR_RETURN', '경로 복귀', 'HOME 보정과 알려진 경로 위치가 필요합니다.')
+      + testButton('MOTOR_STOP', '모터 정지') + '</div></div>'
+      + '<div class="advgroup"><span>ActuatorUno · 0x09</span><div class="advrow">'
+      + testButton('ACT_HUMIDIFY', '가습기 ON') + testButton('ACT_DEHUMID', '펠티어+팬 ON') + testButton('ACT_STOP', '모듈 OFF')
+      + '</div></div>'
+      + '<div class="advgroup"><span>통신</span><div class="advrow">'
+      + testButton('I2C_CHECK', 'I2C 확인') + testButton('RFID_TEST', 'RFID 도착 모사') + '</div></div>'
+      + '<div class="advgroup"><span>원격 제어 토큰 · 이 브라우저 세션에만 저장</span>'
+      + '<input class="tokenbox" id="tokenBox" type="password" autocomplete="off" spellcheck="false" '
+      + 'placeholder="서버의 CONTROL_API_TOKEN" value="' + esc(token) + '">'
+      + '<div class="note" style="margin-left:0">서버와 같은 PC(127.0.0.1)에서 열었다면 토큰 없이도 제어됩니다.</div></div>'
+      + '</div></details>'
+      + '<a class="linkrow" href="/"><div><b>관제 대시보드 열기</b>'
+      + '<span>습도 추이 차트, 시리얼 터미널, ACK 상세</span></div><span class="arrow">→</span></a>'
+      + '<a class="linkrow" href="/logic"><div><b>현재 로직 보기</b>'
+      + '<span>상태 전이와 안전 조건</span></div><span class="arrow">→</span></a>'
+      + '<div class="note">차량을 HOME의 넓은 검은 마커에 올리고 첫 구역 방향으로 정렬한 뒤 동기화하세요.</div>';
+  }
+
+  var SCREENS = {home:homeScreen, zone:zoneScreen, log:logScreen, set:setScreen};
+
+  /* ---------- 렌더 ---------- */
+
+  function signature(d){
+    if (!d) return 'none|' + ui.tab + '|' + ui.connError;
+    var zones = (d.zones || []).map(function(z){
+      return [z.zone_id, z.humidity, z.temperature, z.state, z.action,
+        Math.floor(Math.max(0, d.server_time - (z.updated_at || d.server_time)) / 10)].join(',');
+    }).join(';');
+    var network = d.robot_network || {}, command = d.effective_command || {},
+        delivery = d.command_delivery || {}, control = d.manual_control || {};
+    var devices = (d.devices || []).map(function(x){
+      return x.device_id + ':' + x.online + ':'
+        + Math.floor(Math.max(0, d.server_time - (x.last_seen || d.server_time)) / 10);
+    }).join(';');
+    var events = (d.events || []).slice(0, 20).map(function(e){ return e.id; }).join(';');
+    return [ui.tab, ui.target, ui.mode, ui.busy, ui.msg, ui.connected, zones,
+      network.phase, network.zone, network.online, command.revision, command.command,
+      command.target_zone, command.action, command.source, control.enabled, control.command,
+      delivery.state, delivery.message, devices, events, JSON.stringify(d.thresholds)].join('|');
+  }
+
+  function render(force){
+    var sig = signature(data);
+    if (!force && sig === ui.lastSig) return;
+    ui.lastSig = sig;
+
+    var screen = document.getElementById('screen');
+    if (!data) {
+      screen.innerHTML = '<div class="empty">' + esc(ui.connError || '서버에 연결하는 중입니다…') + '</div>';
+    } else {
+      screen.innerHTML = SCREENS[ui.tab](data);
+      var bot = screen.querySelector('[data-bot]');
+      if (bot) {
+        var next = Number(bot.dataset.top);
+        requestAnimationFrame(function(){ bot.style.top = next + 'px'; });
+        ui.lastBotTop = next;
+      }
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(button){
+      button.classList.toggle('on', button.dataset.tab === ui.tab);
+    });
+  }
+
+  var refreshInFlight = false;
+  function refresh(){
+    if (refreshInFlight) return Promise.resolve();
+    refreshInFlight = true;
+    return fetch('/api/dashboard', {cache:'no-store'}).then(function(response){
+      if (!response.ok) {
+        return response.json().catch(function(){ return {}; }).then(function(body){
+          throw new Error(body.error || ('HTTP ' + response.status));
+        });
+      }
+      return response.json();
+    }).then(function(payload){
+      data = payload;
+      ui.connected = true;
+      ui.connError = '';
+      if (!ui.target) ui.target = (payload.effective_command || {}).target_zone || 'HOME';
+    }).catch(function(error){
+      ui.connected = false;
+      ui.connError = '서버 연결 실패: ' + error.message;
+    }).then(function(){
+      refreshInFlight = false;
+      render();
+    });
+  }
+
+  /* ---------- 입력 ---------- */
+
+  document.getElementById('tabbar').innerHTML = TABS.map(function(tab){
+    return '<button class="tab" data-tab="' + tab.id + '">' + svg(tab.icon) + '<span>' + tab.label + '</span></button>';
+  }).join('');
+
+  document.getElementById('tabbar').addEventListener('click', function(event){
+    var button = event.target.closest('.tab');
+    if (!button) return;
+    ui.tab = button.dataset.tab;
+    say('', '');
+    render(true);
+  });
+
+  document.getElementById('screen').addEventListener('click', function(event){
+    var button = event.target.closest('[data-act]');
+    if (!button || button.disabled || !data) return;
+    var action = button.dataset.act;
+
+    if (action === 'target') {
+      ui.target = button.dataset.code;
+      say('', '');
+      render(true);
+    } else if (action === 'mode') {
+      ui.mode = button.dataset.mode;
+      render(true);
+    } else if (action === 'go') {
+      var target = ui.target || 'HOME';
+      if (target === 'HOME') sendControl({mode:'MANUAL', command:'MOTOR_RETURN'}, 'HOME으로 복귀를 지시하는 중…');
+      else sendControl({mode:'MANUAL', command:'TASK', target_zone:target, action:ui.mode}, '출동을 지시하는 중…');
+    } else if (action === 'dispatch') {
+      ui.target = button.dataset.code;
+      ui.mode = button.dataset.mode;
+      ui.tab = 'home';
+      sendControl({mode:'MANUAL', command:'TASK', target_zone:ui.target, action:ui.mode}, '출동을 지시하는 중…');
+    } else if (action === 'return') {
+      sendControl({mode:'MANUAL', command:'MOTOR_RETURN'}, 'HOME으로 복귀를 지시하는 중…');
+    } else if (action === 'estop') {
+      sendControl({mode:'MANUAL', command:'ALL_STOP'}, '전체 정지를 지시하는 중…');
+    } else if (action === 'auto') {
+      var latched = allStopLatched(data);
+      if (latched && !window.confirm('전체 긴급 정지가 걸려 있습니다. 해제하고 자동 임무로 복귀할까요?')) return;
+      sendControl({mode:'AUTO', confirm_all_stop:Boolean(latched)}, '자동 임무로 복귀하는 중…');
+    } else if (action === 'cmd') {
+      sendControl({mode:'MANUAL', command:button.dataset.command}, '명령을 보내는 중…');
+    } else if (action === 'calibrate') {
+      if (!window.confirm('차량이 HOME의 넓은 검은 마커 위에 있고 첫 구역 방향을 향하고 있습니까?\n\n이 명령은 임무를 시작하지 않고 위치·방향 기준만 맞춥니다.')) return;
+      sendControl({mode:'MANUAL', command:'CALIBRATE_HOME'}, 'HOME 기준을 동기화하는 중…');
+    } else if (action === 'rename') {
+      var code = button.dataset.code;
+      var input = window.prompt(code + '을(를) 뭐라고 부를까요?', zoneName(code));
+      if (input == null) return;
+      var trimmed = input.trim();
+      if (trimmed) names[code] = trimmed; else delete names[code];
+      try { localStorage.setItem(NAME_KEY, JSON.stringify(names)); } catch (e) { /* 저장 실패는 무시한다 */ }
+      render(true);
+    } else if (action === 'inc' || action === 'dec') {
+      var step = action === 'inc' ? 1 : -1;
+      var next = {
+        temperature_min:Number(data.thresholds.temperature_min),
+        temperature_max:Number(data.thresholds.temperature_max),
+        humidity_min:Number(data.thresholds.humidity_min),
+        humidity_max:Number(data.thresholds.humidity_max)
+      };
+      var key = button.dataset.key;
+      next[key] = next[key] + step;
+      if (next.humidity_min >= next.humidity_max - 4 && (key === 'humidity_min' || key === 'humidity_max')) {
+        say('습도 상·하한은 최소 5%p 떨어져 있어야 합니다.', 'bad');
+        render(true);
+        return;
+      }
+      if (next.temperature_min >= next.temperature_max - 3 && (key === 'temperature_min' || key === 'temperature_max')) {
+        say('온도 상·하한은 최소 4 °C 떨어져 있어야 합니다.', 'bad');
+        render(true);
+        return;
+      }
+      data.thresholds = Object.assign({}, data.thresholds, next);
+      say('', '');
+      render(true);
+      saveThresholds(next);
+    }
+  });
+
+  document.getElementById('screen').addEventListener('change', function(event){
+    if (event.target.id !== 'tokenBox') return;
+    var value = event.target.value.trim();
+    try {
+      if (value) sessionStorage.setItem(TOKEN_KEY, value);
+      else sessionStorage.removeItem(TOKEN_KEY);
+    } catch (e) { /* 저장 실패는 무시한다 */ }
+    say('토큰을 이 세션에 저장했습니다.', 'ok');
+    render(true);
+  });
+
+  render(true);
+  refresh();
+  setInterval(refresh, 1500);
+})();
+</script>
+</body>
+</html>

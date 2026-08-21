@@ -1,6 +1,6 @@
 # 문서·저장소 구성 참고 자료
 
-이 문서는 HumiBot 저장소를 정리할 때 참고한 공개 자료와 적용 원칙을 기록합니다. 코드나 하드웨어 설계를 그대로 복제한 것이 아니라, 첫 화면의 정보 구조와 검증 범위 표현, 문서 분리 방식을 비교했습니다.
+이 문서는 구르미 저장소를 정리할 때 참고한 공개 자료와 적용 원칙을 기록합니다. 코드나 하드웨어 설계를 그대로 복제한 것이 아니라, 첫 화면의 정보 구조와 검증 범위 표현, 문서 분리 방식을 비교했습니다.
 
 ## GitHub 공식 기준
 
@@ -12,7 +12,7 @@
 
 ## 공개 로봇 프로젝트에서 참고한 패턴
 
-| 프로젝트 | 참고한 점 | HumiBot 적용 |
+| 프로젝트 | 참고한 점 | 구르미 적용 |
 | --- | --- | --- |
 | [autonomous-ai/autonomous-robot](https://github.com/autonomous-ai/autonomous-robot) | 상단 시스템 연결도, 순서가 있는 온보딩, 테스트 환경 구분 | README의 단일 구성도, Quick Start, 날짜·범위가 분명한 검증 문서 |
 | [Lenna Mobile Robot ONE](https://github.com/Lenna-Robotics-Research-Lab/Lenna-Mobile-Robot-ONE) | README를 진입점으로 두고 hardware/software/docs를 역할별 분리 | `firmware/`, `server/`, `simulide/`, `tests/`, `docs/` 구조와 문서 인덱스 |

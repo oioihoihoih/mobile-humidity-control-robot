@@ -1,10 +1,10 @@
-# HumiBot — 이동형 습도 제어 로봇
+# 구르미 — 이동형 습도 제어 로봇
 
 > 두 구역의 온·습도를 수집하고, 우선순위가 가장 높은 구역으로 이동해 가습 또는 제습 임무를 수행하도록 설계한 Arduino·Python 팀 프로젝트입니다.
 
 [![CI](https://github.com/oioihoihoih/mobile-humidity-control-robot/actions/workflows/ci.yml/badge.svg)](https://github.com/oioihoihoih/mobile-humidity-control-robot/actions/workflows/ci.yml)
 
-![HumiBot 관제 대시보드](docs/assets/dashboard-preview.png)
+![구르미 관제 대시보드](docs/assets/dashboard-preview.png)
 
 _합성 데이터로 렌더링한 관제 UI 예시입니다. 실차 왕복이나 고전력 가습·제습 부하의 성공 증거가 아닙니다._
 
@@ -79,6 +79,7 @@ python server/server.py
 - `/health`: 프로세스와 빌드 정보
 - `/ready`: MySQL 연결 준비 상태
 - `/logic`: 실행 중인 시스템 로직 문서
+- `/app`: 휴대폰용 간이 화면. `/` 관제 대시보드와 같은 `/api/dashboard` 데이터를 쓰며, 지도·출동 버튼·정상 범위만 남기고 추이 차트와 시리얼 터미널은 `/`에 그대로 둡니다.
 
 가상환경 활성화, 샘플 측정 전송, 펌웨어 설정과 신뢰 LAN 연결 방법은 [설치·실행 문서](docs/setup.md)를 따르세요.
 

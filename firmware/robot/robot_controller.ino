@@ -1,4 +1,4 @@
-// LEGACY PROTOTYPE — not used by the current three-Uno HumiBot build.
+// LEGACY PROTOTYPE — not used by the current three-Uno Gureumi build.
 // Robot ESP32 MVP: Wi-Fi command polling, line following, RFID arrival detection,
 // obstacle stop, L298N motor control, and humidify/dehumidify relay control.
 //

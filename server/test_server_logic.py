@@ -1977,6 +1977,59 @@ class ServerLogicTests(unittest.TestCase):
         self.assertIn("CALIBRATE_HOME", logic_html)
         self.assertIn("AUTO 전환이나 구역 TASK", logic_html)
 
+    def test_app_route_serves_the_phone_page_without_touching_the_database(self) -> None:
+        """/app은 정적 파일만 읽는다. DB가 죽어도 화면 자체는 떠야 한다."""
+        served: dict = {}
+
+        for path in ("/app", "/app/"):
+            with self.subTest(path=path):
+                handler = object.__new__(server.Handler)
+                handler.path = path
+                handler.wfile = io.BytesIO()
+                handler.send_response = lambda status: served.update(status=status)
+                handler.send_header = lambda *args: None
+                handler.end_headers = lambda: None
+
+                with patch.object(server, "connect", side_effect=AssertionError("no DB")):
+                    handler.do_GET()
+
+                self.assertEqual(served["status"], server.HTTPStatus.OK)
+                body = handler.wfile.getvalue().decode("utf-8")
+                self.assertIn("<title>구르미</title>", body)
+                self.assertIn("/api/dashboard", body)
+
+    def test_phone_app_page_reuses_existing_apis_and_links_back(self) -> None:
+        app_html = server.APP_PATH.read_text(encoding="utf-8")
+        dashboard_html = server.DASHBOARD_PATH.read_text(encoding="utf-8")
+
+        # 새 화면은 별도 API를 만들지 않고 기존 계약만 사용한다.
+        self.assertIn("'/api/dashboard'", app_html)
+        self.assertIn("'/api/control'", app_html)
+        self.assertIn("'/api/settings'", app_html)
+        self.assertIn("humidity-rover-control-token", app_html)
+
+        # 수동 명령은 서버가 허용하는 이름만 보낸다.
+        for command in ("TASK", "MOTOR_RETURN", "ALL_STOP", "CALIBRATE_HOME"):
+            self.assertIn(command, app_html)
+
+        # 관제 대시보드는 유지하고 서로 오갈 수 있어야 한다.
+        self.assertIn('href="/"', app_html)
+        self.assertIn('href="/logic"', app_html)
+        self.assertIn('href="/app"', dashboard_html)
+
+    def test_legacy_port_does_not_expose_the_phone_app_page(self) -> None:
+        handler = object.__new__(server.LegacyHandler)
+        handler.path = "/app"
+        captured: dict = {}
+        handler.send_json = lambda status, payload: captured.update(
+            status=status,
+            payload=payload,
+        )
+
+        handler.do_GET()
+
+        self.assertEqual(captured["status"], server.HTTPStatus.NOT_FOUND)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

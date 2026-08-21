@@ -19,7 +19,8 @@ Python 서버는 대시보드, 센서 입력, 자동차 명령·ACK와 제한된
 
 | 메서드 | 경로 | 용도 | LAN 제어 토큰 |
 | --- | --- | --- | --- |
-| GET | `/` | 웹 대시보드 | 불필요 |
+| GET | `/` | 웹 관제 대시보드 | 불필요 |
+| GET | `/app` | 휴대폰용 간이 화면 | 불필요 |
 | GET | `/logic` | 시스템 로직 HTML | 불필요 |
 | GET | `/health`, `/api/health` | 프로세스·빌드 liveness | 불필요 |
 | GET | `/ready`, `/api/ready` | MySQL readiness | 불필요 |
