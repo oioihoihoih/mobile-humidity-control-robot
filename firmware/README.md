@@ -1,45 +1,29 @@
-# Firmware map
+# Firmware
 
-The current HumiBot runtime uses three Arduino Uno sketches on the robot and
-two ESP-01 sketches at the fixed sensing zones.
+## 자동차용 Uno 3개
 
-## Current runtime
+GitHub에 공개하는 운영 Uno 코드는 아래 세 개뿐입니다.
 
-| Role | Sketch | Notes |
+| 보드 | 스케치 | 역할 |
 | --- | --- | --- |
-| SensorUno / I²C master | `uno_robot_esp01_rfid_relay/` | Network polling, RFID, route state, mission coordination |
-| MotorUno / I²C `0x08` | `uno_line_tracker_motor_controller/` | Four-motor line following plus local rear HC-SR04 reverse safety; M1/M3 left, M2/M4 right |
-| ActuatorUno / I²C `0x09` | `uno_humidity_module_controller/` | Local DHT22, humidifier, dehumidifier, fan, and LCD |
-| Fixed zone 2 | `zone2_esp01_direct/` | ESP-01 + DHT sensor reporter |
-| Fixed zone 99 | `zone99_esp01_dht11/` | ESP-01 + DHT sensor reporter |
+| SensorUno | `uno_robot_esp01_rfid_relay/` | 서버 통신, RFID, 임무 조율 |
+| MotorUno | `uno_line_tracker_motor_controller/` | 4모터, 라인 센서, 후방 초음파 |
+| ActuatorUno | `uno_humidity_module_controller/` | 가습·제습 릴레이, 팬, LCD |
 
-Copy each checked-in `*.example.h` file to the corresponding ignored private
-header before compiling networked sketches. Never commit SSIDs, passwords,
-access tokens, or site-specific addresses.
+세 스케치는 항상 같은 커밋 버전으로 함께 업로드합니다. SensorUno를 빌드하기
+전에는 `robot_network_config.example.h`를 복사해 Git에서 제외되는
+`robot_network_config.h`를 만들고 현장 설정을 입력합니다.
 
-Upload SensorUno and MotorUno from the same commit. The four-motor runtime uses
-versioned movement commands `0x11/0x12` for absolute forward/straight reverse
-and requires a `PROTOCOL_SYNC(7)` exact ACK before HOME calibration. Legacy
-movement values `1/2` are invalid, so a mixed old/new pair remains stopped.
+## 고정 구역 센서
 
-## Diagnostics
+아래 코드는 Uno가 아니라 ESP-01용입니다.
 
-The following sketches temporarily replace runtime firmware while diagnosing
-hardware. Lift the drive wheels and disconnect high-current loads before using
-them.
+- `zone2_esp01_direct/`
+- `zone99_esp01_dht11/`
 
-- `i2c_bus_diagnostic/`, `i2c_passive_release/`, `i2c_slave_diagnostic/`
-- `sensor_bus_release/`, `uno_sensor_pin_diagnostic/`
-- `uno_esp01_at_bridge/`, `uno_esp01_autobaud_diagnostic/`
-- `uno_motor_power_diagnostic/` (independent M1–M4 and forward/reverse test), `uno_rc522_diagnostic/`
-- `uno_zone2_rfid_drive_diagnostic/` (SensorUno replacement for HOME sync → versioned 4WD forward → ZONE2 RFID stop; copy its example UID header first)
-- `uno_server_gateway_esp01/` (optional USB/network handoff helper)
+`robot/`과 `zone_sensor/`는 이전 ESP32 실험 자료이며 현재 자동차 펌웨어가
+아닙니다. 그 밖의 Uno 진단·실험 스케치는 로컬에만 두고 GitHub에서는
+추적하지 않습니다.
 
-## Legacy prototypes
-
-`robot/`, `zone_sensor/`, and `uno_dht11_esp8266/` preserve earlier ESP32 and
-single-node experiments. They are not the current three-Uno build and are not
-compiled by CI.
-
-See [`../docs/hardware.md`](../docs/hardware.md) for wiring and power rules and
-[`../docs/testing.md`](../docs/testing.md) for the verification matrix.
+배선은 [`../docs/hardware.md`](../docs/hardware.md), 검증 절차는
+[`../docs/testing.md`](../docs/testing.md)를 확인하세요.

@@ -27,8 +27,6 @@ SENSOR_SOURCE = ROOT / "firmware/uno_robot_esp01_rfid_relay/uno_robot_esp01_rfid
 MOTOR_SOURCE = ROOT / "firmware/uno_line_tracker_motor_controller/uno_line_tracker_motor_controller.ino"
 ACTUATOR_SOURCE = ROOT / "firmware/uno_humidity_module_controller/uno_humidity_module_controller.ino"
 NETWORK_SOURCE = ROOT / "firmware/uno_robot_esp01_rfid_relay/robot_network_config.example.h"
-SENSOR_DIAGNOSTIC_SOURCE = ROOT / "firmware/uno_sensor_pin_diagnostic/uno_sensor_pin_diagnostic.ino"
-ZONE2_DRIVE_DIAGNOSTIC_SOURCE = ROOT / "firmware/uno_zone2_rfid_drive_diagnostic/uno_zone2_rfid_drive_diagnostic.ino"
 
 
 class MotorCommand(IntEnum):
@@ -2592,10 +2590,6 @@ class FirmwareSourceContractTests(unittest.TestCase):
         cls.motor = MOTOR_SOURCE.read_text(encoding="utf-8")
         cls.actuator = ACTUATOR_SOURCE.read_text(encoding="utf-8")
         cls.network = NETWORK_SOURCE.read_text(encoding="utf-8")
-        cls.sensor_diagnostic = SENSOR_DIAGNOSTIC_SOURCE.read_text(encoding="utf-8")
-        cls.zone2_drive_diagnostic = ZONE2_DRIVE_DIAGNOSTIC_SOURCE.read_text(
-            encoding="utf-8"
-        )
 
     def assert_source(self, source: str, pattern: str) -> None:
         self.assertRegex(source, pattern)
@@ -2609,18 +2603,15 @@ class FirmwareSourceContractTests(unittest.TestCase):
             r"RFID_MOSI_PIN\s*=\s*10",
             r"RFID_MISO_PIN\s*=\s*11",
             r"RFID_RST_PIN\s*=\s*12",
+            r"DHT_PIN\s*=\s*4",
+            r"DHT_TYPE\s*=\s*DHT22",
         ):
             self.assert_source(self.sensor, pattern)
-        for removed_sensor_peripheral in (
-            "#include <DHT.h>",
-            "DHT_PIN",
-            "ULTRASONIC_ECHO_PIN",
-            "ULTRASONIC_TRIG_PIN",
-        ):
-            self.assertNotIn(removed_sensor_peripheral, self.sensor)
-        self.assert_source(self.actuator, r"DHT_PIN\s*=\s*2")
-        self.assert_source(self.actuator, r"DHT_TYPE\s*=\s*DHT22")
-        self.assert_source(self.motor, r"ULTRASONIC_ECHO_PIN\s*=\s*2")
+        self.assertIn("#include <DHT.h>", self.sensor)
+        self.assertIn("DHT dht(DHT_PIN, DHT_TYPE);", self.sensor)
+        self.assertNotIn("ULTRASONIC_ECHO_PIN", self.sensor)
+        self.assertNotIn("ULTRASONIC_TRIG_PIN", self.sensor)
+        self.assert_source(self.motor, r"ULTRASONIC_ECHO_PIN\s*=\s*A0")
         self.assert_source(self.motor, r"ULTRASONIC_TRIG_PIN\s*=\s*A1")
         self.assertIn('#define ROBOT_SERVER_HOST "192.0.2.10"', self.network)
         self.assertIn('#define ROBOT_ZONE2_UID "AA BB CC DD"', self.network)
@@ -2659,26 +2650,6 @@ class FirmwareSourceContractTests(unittest.TestCase):
             self.assert_source(
                 source, r"(?:MOTOR_)?STATUS_PROTOCOL_REQUIRED\s*=\s*8"
             )
-
-        self.assert_source(
-            self.zone2_drive_diagnostic, r"MOTOR_FORWARD\s*=\s*0x11"
-        )
-        self.assert_source(
-            self.zone2_drive_diagnostic, r"MOTOR_PROTOCOL_SYNC\s*=\s*7"
-        )
-        diagnostic_setup = self.zone2_drive_diagnostic[
-            self.zone2_drive_diagnostic.index("void setup()") :
-        ]
-        self.assertLess(
-            diagnostic_setup.index('stopMotorConfirmed(F("diagnostic boot"))'),
-            diagnostic_setup.index("rfid.PCD_Init()"),
-        )
-        self.assertLess(
-            diagnostic_setup.index("stopActuatorBestEffort()"),
-            diagnostic_setup.index("rfid.PCD_Init()"),
-        )
-        self.assertIn("ACTUATOR_CONTROL_MAGIC = 0xA5", self.zone2_drive_diagnostic)
-        self.assertNotIn("Serial.println(uidText)", self.zone2_drive_diagnostic)
 
         self.assert_source(self.sensor, r"bool\s+routeCalibrated\s*=\s*false")
         self.assert_source(
@@ -2738,7 +2709,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
 
     def test_same_revision_never_restarts_a_completed_module_without_server_grant(self) -> None:
         same_start = self.sensor.index("if (nextRevision == lastCommandRevision)")
-        same_end = self.sensor.index('Serial.print(F("[COMMAND] new revision="))', same_start)
+        same_end = self.sensor.index("acknowledgedRevision = nextRevision;", same_start)
         same_revision_body = self.sensor[same_start:same_end]
         self.assertNotIn("same violation persists", same_revision_body)
         self.assertNotIn("startPlaceholderModule(false)", same_revision_body)
@@ -2978,8 +2949,9 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assert_source(self.motor, r"ULTRASONIC_MIN_CM\s*=\s*2")
         self.assert_source(self.motor, r"ULTRASONIC_MAX_CM\s*=\s*400")
         self.assert_source(self.motor, r"ULTRASONIC_CLEAR_STREAK_REQUIRED\s*=\s*3")
-        self.assertIn("attachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN)", self.motor)
-        self.assertIn("captureUltrasonicEcho", self.motor)
+        self.assertIn("ISR(PCINT1_vect)", self.motor)
+        self.assertIn("PCMSK1 |= _BV(PCINT8)", self.motor)
+        self.assertIn("PCICR |= _BV(PCIE1)", self.motor)
         self.assertIn("ULTRASONIC_SAMPLE_STUCK_HIGH", self.motor)
         self.assertIn(
             'F("[BOOT] STUCK_HIGH stops reverse; NO_ECHO is diagnostic")',
@@ -3009,6 +2981,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assertIn('Serial.print(F("[DIAG] P="));', self.sensor)
         for core_error in (
             '[I2C] transmit failed address=0x',
+            '[DHT22] read failed on D4',
             '[WIFI] ESP-01 AT communication failed',
             '[WIFI] ESP send busy -> quiet backoff',
             '[RFID] card UID read failed',
@@ -3017,7 +2990,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assertNotIn("ultrasonicReadyForMovement", self.sensor)
         self.assertNotIn("rejectMovementForUltrasonic", self.sensor)
         self.assertNotIn("void updateObstacleSensor()", self.sensor)
-        self.assertNotIn("#include <DHT.h>", self.sensor)
+        self.assertIn("#include <DHT.h>", self.sensor)
         self.assertIn("localObstaclePauseActive", self.motor)
         self.assertIn("bool reverseUltrasonicControlActive()", self.motor)
         self.assertIn("activeCommand == COMMAND_RETURN && headingHomebound", self.motor)
@@ -3026,7 +2999,10 @@ class FirmwareSourceContractTests(unittest.TestCase):
         self.assertIn("ULTRASONIC_CLEAR_STREAK_REQUIRED", self.motor)
         self.assertIn("ULTRASONIC_SAMPLE_STUCK_HIGH", self.motor)
         self.assertIn("ULTRASONIC_SAMPLE_NO_ECHO", self.motor)
-        self.assertIn("obstaclePauseActive = status == MOTOR_STATUS_OBSTACLE;", self.sensor)
+        self.assertIn(
+            "obstaclePauseActive = status == MOTOR_STATUS_OBSTACLE;",
+            self.sensor,
+        )
 
         return_start = self.sensor.index("bool startPlaceholderReturn()")
         return_end = self.sensor.index("bool startPlaceholderModule(", return_start)
@@ -3206,7 +3182,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
             body.index("checkRfidArrival();"),
         ]
         self.assertEqual(wait_services, sorted(wait_services))
-        # DHT/HC now run on their owning peripheral boards, never in an ESP wait.
+        # DHT disables interrupts, so it must never run during SoftwareSerial receive.
         self.assertNotIn("updateDhtSensor();", body)
         self.assertNotIn("updateObstacleSensor();", body)
         self.assertNotIn("updateSensorLcd();", body)
@@ -3488,9 +3464,7 @@ class FirmwareSourceContractTests(unittest.TestCase):
         )
 
         same_start = self.sensor.index("if (nextRevision == lastCommandRevision)")
-        same_end = self.sensor.index(
-            'Serial.print(F("[COMMAND] new revision="))', same_start
-        )
+        same_end = self.sensor.index("acknowledgedRevision = nextRevision;", same_start)
         same_body = self.sensor[same_start:same_end]
         self.assertIn("retrySameRevisionAllowed", same_body)
         self.assertIn("!robotReportPending", same_body)
@@ -3560,16 +3534,17 @@ class FirmwareSourceContractTests(unittest.TestCase):
         for token in (
             "payload[0] = currentDisplayState();",
             "payload[1] = currentDisplayZoneCode();",
-            "payload[2] = 0;",
-            "payload[3] = 0;",
-            "payload[4] = 0;",
-            "payload[5] = 0;",
+            "payload[2] = static_cast<byte>(temperatureTenths & 0xFF);",
+            "payload[3] = static_cast<byte>((temperatureTenths >> 8) & 0xFF);",
+            "payload[4] = static_cast<byte>(humidityTenths & 0xFF);",
+            "payload[5] = static_cast<byte>((humidityTenths >> 8) & 0xFF);",
             "payload[6] = flags;",
         ):
             self.assertIn(token, build_body)
-        self.assertNotIn("sensorTemperature", build_body)
-        self.assertNotIn("sensorHumidity", build_body)
-        self.assertIn("DHT dht(DHT_PIN, DHT_TYPE);", self.actuator)
+        self.assertIn("sensorTemperature", build_body)
+        self.assertIn("sensorHumidity", build_body)
+        self.assertIn("DISPLAY_FLAG_DHT_VALID", build_body)
+        self.assertIn("DHT dht(DHT_PIN, DHT_TYPE);", self.sensor)
 
         send_start = self.sensor.index("bool sendDisplayTelemetryFrame()")
         send_end = self.sensor.index("void serviceDisplayTelemetry()", send_start)
@@ -3744,20 +3719,15 @@ class FirmwareSourceContractTests(unittest.TestCase):
             "currentInputFlags = frame[8];",
         ):
             self.assertIn(token, display_body)
-        for removed_remote_dht_field in (
-            "nextTemperatureTenths",
+        for remote_dht_field in (
             "nextHumidityTenths",
             "currentTemperatureTenths",
             "currentHumidityTenths",
         ):
-            self.assertNotIn(removed_remote_dht_field, display_body)
-        local_dht_start = self.actuator.index("void serviceLocalDht()")
-        local_dht_end = self.actuator.index("void serviceDisplayStaleness", local_dht_start)
-        local_dht_body = self.actuator[local_dht_start:local_dht_end]
-        self.assertIn("dht.readHumidity()", local_dht_body)
-        self.assertIn("dht.readTemperature()", local_dht_body)
-        self.assertIn("localHumidityTenths", local_dht_body)
-        self.assertIn("localTemperatureTenths", local_dht_body)
+            self.assertIn(remote_dht_field, display_body)
+        self.assertIn("DISPLAY_INPUT_VALID", display_body)
+        self.assertNotIn("void serviceLocalDht()", self.actuator)
+        self.assertNotIn("#include <DHT.h>", self.actuator)
 
         self.assert_source(self.actuator, r"DISPLAY_STALE_MS\s*=\s*30000")
         loop_start = self.actuator.index("void loop()")

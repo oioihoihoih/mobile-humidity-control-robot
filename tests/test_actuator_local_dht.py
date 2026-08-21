@@ -1,8 +1,8 @@
-"""Source-contract tests for the ActuatorUno-local DHT22 split.
+"""ActuatorUno contract when DHT telemetry remains on SensorUno.
 
-These tests are intentionally hardware-free.  They protect the pin/protocol
-contract and, in particular, make sure a failed DHT read cannot stop a running
-humidifier/dehumidifier task.
+The legacy filename stays discoverable, while the assertions protect the
+memory-saving design: ActuatorUno renders the validated 10-byte telemetry
+frame and does not instantiate a second DHT driver.
 """
 
 from __future__ import annotations
@@ -12,28 +12,48 @@ import unittest
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
 SOURCE_PATH = (
-    ROOT
-    / "firmware/uno_humidity_module_controller/uno_humidity_module_controller.ino"
+    Path(__file__).resolve().parents[1]
+    / "firmware"
+    / "uno_humidity_module_controller"
+    / "uno_humidity_module_controller.ino"
 )
 
 
-def function_body(source: str, signature: str, next_signature: str) -> str:
-    start = source.index(signature)
-    end = source.index(next_signature, start)
-    return source[start:end]
+def function_body(source: str, name: str) -> str:
+    match = re.search(rf"\bvoid\s+{re.escape(name)}\s*\(\s*\)\s*\{{", source)
+    if match is None:
+        raise AssertionError(f"function definition not found: {name}")
+    opening = source.index("{", match.start())
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening + 1 : index]
+    raise AssertionError(f"unterminated function: {name}")
 
 
-class ActuatorLocalDhtSourceTests(unittest.TestCase):
+class ActuatorRemoteDhtSourceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = SOURCE_PATH.read_text(encoding="utf-8")
 
-    def assert_source(self, pattern: str) -> None:
-        self.assertRegex(self.source, re.compile(pattern, re.DOTALL))
+    def test_actuator_has_no_local_dht_driver_or_d2_assignment(self) -> None:
+        for forbidden in (
+            "#include <DHT.h>",
+            "DHT_PIN",
+            "DHT_TYPE",
+            "DHT_READ_INTERVAL_MS",
+            "DHT dht(",
+            "serviceLocalDht",
+            "dht.begin()",
+        ):
+            self.assertNotIn(forbidden, self.source)
 
-    def test_existing_pin_and_i2c_protocol_contract_is_unchanged(self) -> None:
+    def test_existing_relay_lcd_and_i2c_contract_is_unchanged(self) -> None:
         for pattern in (
             r"I2C_ADDRESS\s*=\s*0x09",
             r"CONTROL_FRAME_MAGIC\s*=\s*0xA5",
@@ -47,103 +67,43 @@ class ActuatorLocalDhtSourceTests(unittest.TestCase):
             r"LCD_SOFT_SDA_PIN\s*=\s*5",
             r"LCD_SOFT_SCL_PIN\s*=\s*4",
         ):
-            self.assert_source(pattern)
+            self.assertRegex(self.source, pattern)
 
-    def test_dht22_is_local_on_d2_and_sampled_every_three_seconds(self) -> None:
-        for pattern in (
-            r"#include\s*<DHT\.h>",
-            r"DHT_PIN\s*=\s*2",
-            r"DHT_TYPE\s*=\s*DHT22",
-            r"DHT_READ_INTERVAL_MS\s*=\s*3000",
-            r"DHT\s+dht\s*\(\s*DHT_PIN\s*,\s*DHT_TYPE\s*\)",
-            r"dht\.begin\s*\(\s*\)",
-            r"now\s*-\s*lastDhtReadAt\s*<\s*DHT_READ_INTERVAL_MS",
-        ):
-            self.assert_source(pattern)
-
-    def test_display_frame_keeps_compatibility_but_does_not_supply_dht_data(self) -> None:
-        body = function_body(
-            self.source, "void serviceDisplayMailbox()", "void serviceLocalDht()"
-        )
+    def test_validated_display_frame_supplies_temperature_and_humidity(self) -> None:
+        body = function_body(self.source, "serviceDisplayMailbox")
         for token in (
             "frame[0] != DISPLAY_FRAME_MAGIC",
             "crc8Atm(frame, DISPLAY_FRAME_SIZE - 1)",
-            "lastDisplaySeq = frame[1];",
-            "currentDisplayState = nextState;",
-            "currentZoneCode = nextZone;",
-            "currentInputFlags = frame[8];",
+            "static_cast<uint16_t>(frame[6])",
+            "static_cast<uint16_t>(frame[7]) << 8",
+            "nextHumidityTenths > 1000",
+            "static_cast<uint16_t>(frame[4])",
+            "static_cast<uint16_t>(frame[5]) << 8",
+            "currentHumidityTenths = nextHumidityTenths;",
+            "DISPLAY_INPUT_VALID",
         ):
             self.assertIn(token, body)
 
-        for ignored_sensor_field in (
-            "frame[4]",
-            "frame[5]",
-            "frame[6]",
-            "frame[7]",
-            "DISPLAY_INPUT_VALID",
-        ):
-            self.assertNotIn(ignored_sensor_field, body)
-
-    def test_lcd_row_zero_uses_only_local_dht_values(self) -> None:
-        body = function_body(
-            self.source, "void formatDisplayLines()", "void scheduleFullLcdRender()"
-        )
+    def test_lcd_row_zero_uses_remote_validity_and_staleness(self) -> None:
+        body = function_body(self.source, "formatDisplayLines")
         for token in (
-            "localDhtReadAttempted",
-            "localDhtValid",
-            'setPaddedLine(0, "DHT22 ERROR")',
-            "localTemperatureTenths",
-            "localHumidityTenths",
-        ):
-            self.assertIn(token, body)
-        for forbidden in (
             "telemetryStale",
-            "DISPLAY_INPUT_VALID",
+            'setPaddedLine(0, "TELEMETRY STALE")',
+            "telemetryDataValid",
+            'setPaddedLine(0, "DHT22 ERROR")',
             "currentTemperatureTenths",
             "currentHumidityTenths",
         ):
-            self.assertNotIn(forbidden, body)
-
-    def test_dht_failure_is_lcd_only_and_cannot_change_actuator_status(self) -> None:
-        body = function_body(
-            self.source, "void serviceLocalDht()", "void serviceDisplayStaleness()"
-        )
-        for token in (
-            "localDhtValid = false;",
-            "formatDisplayLines();",
-            "scheduleFullLcdRender();",
-            "local D2",
-        ):
             self.assertIn(token, body)
-        for forbidden in (
-            "stopAllOutputs",
-            "writeRelay",
-            "publishActuatorState",
-            "publishStatusReply",
-            "actuatorStatus =",
-            "statusReply[",
-            "STATUS_ERROR",
-            "dehumidifyStage =",
-            "taskStartedAt =",
-            "stageStartedAt =",
-        ):
-            self.assertNotIn(forbidden, body)
 
-    def test_command_and_relay_timer_are_serviced_around_dht_read(self) -> None:
-        loop = self.source[self.source.index("void loop()") :]
-        first_command = loop.index("serviceCommandMailbox();")
-        first_timer = loop.index("serviceActuatorTask();")
-        dht = loop.index("serviceLocalDht();")
-        second_command = loop.index("serviceCommandMailbox();", first_command + 1)
-        second_timer = loop.index("serviceActuatorTask();", first_timer + 1)
+    def test_relay_safety_is_serviced_before_display_and_lcd(self) -> None:
+        loop = function_body(self.source, "loop")
+        command = loop.index("serviceCommandMailbox();")
+        timer = loop.index("serviceActuatorTask();")
         display = loop.index("serviceDisplayMailbox();")
         lcd = loop.index("serviceLcd();")
-
-        self.assertLess(first_command, first_timer)
-        self.assertLess(first_timer, dht)
-        self.assertLess(dht, second_command)
-        self.assertLess(second_command, second_timer)
-        self.assertLess(second_timer, display)
+        self.assertLess(command, timer)
+        self.assertLess(timer, display)
         self.assertLess(display, lcd)
 
 

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <DHT.h>
 #include <SoftwareSerial.h>
 #include "SoftwareMFRC522.h"
 #include "robot_network_config.h"
@@ -8,9 +9,8 @@
 // D5(UNO TX) -> ESP-01 RX(5V->3.3V 분압 필수)
 // D6(UNO RX) <- ESP-01 TX
 // RC522 SDA/SCK/MOSI/MISO/RST -> D8/D9/D10/D11/D12 (소프트웨어 SPI)
-// D2/D3/D4는 주변 센서를 다른 Uno로 분배해 비워 둔다.
-// DHT22 DATA -> ActuatorUno D2
-// 뒤쪽 HC-SR04 ECHO/TRIG -> MotorUno D2/A1
+// DHT22 DATA -> D4
+// 뒤쪽 HC-SR04 ECHO/TRIG -> MotorUno A0/A1
 // 주행 Uno와 환경 Uno는 A4(SDA), A5(SCL), GND의 I2C 버스로 연결
 // 세 Uno와 전원들의 제어 GND는 반드시 공통으로 연결한다.
 constexpr byte UNO_ESP_RX_PIN = 6;  // ESP-01 TX가 연결되는 Uno 수신 핀
@@ -20,6 +20,8 @@ constexpr byte RFID_SCK_PIN = 9;
 constexpr byte RFID_MOSI_PIN = 10;
 constexpr byte RFID_MISO_PIN = 11;
 constexpr byte RFID_RST_PIN = 12;
+constexpr byte DHT_PIN = 4;
+constexpr byte DHT_TYPE = DHT22;
 constexpr unsigned long USB_SERIAL_BAUD = 115200;
 
 // UNO 세 대 사이에서 사용하는 I2C 주소와 명령값이다. MotorUno 명령은
@@ -68,6 +70,7 @@ constexpr byte DISPLAY_STATE_DEHUMIDIFY = 3;
 constexpr byte DISPLAY_STATE_DONE = 4;
 constexpr byte DISPLAY_STATE_RETURNING = 5;
 constexpr byte DISPLAY_STATE_ERROR = 6;
+constexpr byte DISPLAY_FLAG_DHT_VALID = 0x01;
 constexpr byte DISPLAY_FLAG_WIFI_READY = 0x02;
 constexpr byte DISPLAY_FLAG_TASK_ACTIVE = 0x04;
 constexpr byte DISPLAY_FLAG_FAULT = 0x08;
@@ -118,6 +121,7 @@ constexpr unsigned long MOTOR_KEEPALIVE_MS = 400;
 SoftwareSerial esp8266(UNO_ESP_RX_PIN, UNO_ESP_TX_PIN);
 SoftwareMFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN, RFID_SCK_PIN,
                      RFID_MOSI_PIN, RFID_MISO_PIN);
+DHT dht(DHT_PIN, DHT_TYPE);
 
 // HTTP 헤더 전체를 보관하지 않고 본문 '{'부터 다시 담으므로 명령 JSON에
 // 충분한 크기만 사용한다. Uno의 HTTP 처리 중 스택 충돌 재부팅을 피한다.
@@ -228,8 +232,13 @@ long lastCommandRevision = -1;
 long acknowledgedRevision = -1;
 byte consecutiveServerFailures = 0;
 constexpr byte SERVER_FAILURES_BEFORE_WIFI_CHECK = 3;
-// MotorUno의 로컬 후방 초음파가 정지시킨 동안 방향 변경 직후의 RFID를
-// 새 역으로 오인하지 않도록 status=OBSTACLE만 기억한다.
+constexpr unsigned long DHT_INTERVAL_MS = 3000;
+unsigned long lastDhtAt = 0;
+float sensorTemperature = NAN;
+float sensorHumidity = NAN;
+bool dhtReadOk = false;
+// MotorUno의 로컬 후방 초음파가 정지시킨 동안 방향 변경 직후 RFID guard의
+// 경과 시간을 멈추기 위해 status=OBSTACLE만 기억한다.
 bool obstaclePauseActive = false;
 constexpr unsigned long DISPLAY_HEARTBEAT_MS = 2000;
 constexpr unsigned long DISPLAY_RETRY_MS = 500;
@@ -429,15 +438,20 @@ void buildDisplayPayload(byte* payload) {
   payload[0] = currentDisplayState();
   payload[1] = currentDisplayZoneCode();
 
-  // 10바이트 wire 형식은 이전 Sensor/Actuator 조합과 호환되게 유지한다.
-  // 환경값은 ActuatorUno D2의 로컬 DHT22가 직접 측정하므로 이 네 바이트와
-  // bit0(DHT valid)은 예약값 0으로 보낸다.
-  payload[2] = 0;
-  payload[3] = 0;
-  payload[4] = 0;
-  payload[5] = 0;
+  int16_t temperatureTenths = 0;
+  uint16_t humidityTenths = 0;
+  if (dhtReadOk && !isnan(sensorTemperature) && !isnan(sensorHumidity)) {
+    temperatureTenths = static_cast<int16_t>(
+        sensorTemperature * 10.0f + (sensorTemperature >= 0 ? 0.5f : -0.5f));
+    humidityTenths = static_cast<uint16_t>(sensorHumidity * 10.0f + 0.5f);
+  }
+  payload[2] = static_cast<byte>(temperatureTenths & 0xFF);
+  payload[3] = static_cast<byte>((temperatureTenths >> 8) & 0xFF);
+  payload[4] = static_cast<byte>(humidityTenths & 0xFF);
+  payload[5] = static_cast<byte>((humidityTenths >> 8) & 0xFF);
 
   byte flags = 0;
+  if (dhtReadOk) flags |= DISPLAY_FLAG_DHT_VALID;
   if (wifiReady) flags |= DISPLAY_FLAG_WIFI_READY;
   if (taskActive) flags |= DISPLAY_FLAG_TASK_ACTIVE;
   if (!strcmp_P(commandResult, PSTR("FAILED"))) flags |= DISPLAY_FLAG_FAULT;
@@ -649,9 +663,12 @@ void armStopRetry(StopRetryMode mode, bool motorStopped, bool moduleStopped);
 bool stopMotorController() {
   const bool stopped = sendMotorCommandChecked(MOTOR_COMMAND_STOP);
   obstaclePauseActive = false;
-  Serial.println(stopped ? F("[I2C MOTOR] STOP confirmed")
-                         : F("[I2C MOTOR] STOP failed/no ACK"));
-  if (!stopped) armStopRetry(STOP_RETRY_KEEP_FAULT, false, true);
+  if (stopped) {
+    TRACE_PRINTLN(F("[I2C MOTOR] STOP confirmed"));
+  } else {
+    Serial.println(F("[I2C MOTOR] STOP failed/no ACK"));
+    armStopRetry(STOP_RETRY_KEEP_FAULT, false, true);
+  }
   return stopped;
 }
 
@@ -662,9 +679,12 @@ bool startMotorController(RouteHeading heading) {
   const bool reversing = heading == HEADING_HOMEBOUND;
   const byte command = reversing ? MOTOR_COMMAND_RETURN : MOTOR_COMMAND_OUTBOUND;
   const bool started = sendMotorCommandChecked(command);
-  Serial.print(F("[I2C MOTOR] command="));
-  Serial.print(reversing ? F("REVERSE_HOMEBOUND") : F("FORWARD_OUTBOUND"));
-  Serial.println(started ? F(" confirmed") : F(" failed/no ACK"));
+  if (started) {
+    TRACE_PRINT(F("[I2C MOTOR] started command="));
+    TRACE_PRINTLN(command);
+  } else {
+    Serial.println(F("[I2C MOTOR] start failed/no ACK"));
+  }
   return started;
 }
 
@@ -756,6 +776,28 @@ bool startRouteTravel(RouteStation destination) {
   return true;
 }
 
+void updateDhtSensor() {
+  if (millis() - lastDhtAt < DHT_INTERVAL_MS) return;
+  lastDhtAt = millis();
+
+  const float humidity = dht.readHumidity();
+  const float temperature = dht.readTemperature();
+  if (isnan(humidity) || isnan(temperature)) {
+    dhtReadOk = false;
+    Serial.println(F("[DHT22] read failed on D4"));
+    return;
+  }
+
+  dhtReadOk = true;
+  sensorHumidity = humidity;
+  sensorTemperature = temperature;
+  TRACE_PRINT(F("[DHT22] T="));
+  TRACE_PRINT(sensorTemperature, 1);
+  TRACE_PRINT(F("C H="));
+  TRACE_PRINT(sensorHumidity, 1);
+  TRACE_PRINTLN(F("%"));
+}
+
 // MotorUno의 2초 독립 watchdog이 동작하지 않도록 주행 중 400ms마다
 // KEEPALIVE를 보내고 실제 상태도 함께 읽는다. 이 함수는 ESP 응답 대기
 // 루프 안에서도 호출되므로 지연이나 문자열 할당을 하지 않는다.
@@ -777,8 +819,6 @@ void serviceMotorLink() {
     return;
   }
   lastMotorStatus = status;
-  // 후방 HC-SR04는 MotorUno가 직접 처리한다. 로컬 장애물 정지 상태만
-  // 받아 방향 변경 직후 RFID guard의 경과 시간을 멈춘다.
   obstaclePauseActive = status == MOTOR_STATUS_OBSTACLE;
   if (appliedCommand != acknowledgedMotorCommand ||
       appliedSequence != acknowledgedMotorSequence ||
@@ -825,7 +865,7 @@ void applyMotorLinkState() {
       robotPhase = PHASE_IDLE;
       setCommandResult(F("COMPLETED"));
       queueRobotReport(F("MOTOR_STOP_LINE"));
-      Serial.println(F("[MOTOR] manual stop line -> IDLE"));
+      TRACE_PRINTLN(F("[MOTOR] manual stop line -> IDLE"));
     // 직선 트랙에서 HOME은 ZONE2보다 안쪽에 있는 종점이다. ZONE2를
     // HOMEBOUND 방향으로 확인한 뒤 만나는 다음 정지선만 HOME으로 인정한다.
     } else if (expectedStation == STATION_HOME && targetStation == STATION_HOME) {
@@ -913,9 +953,12 @@ bool stopModuleController() {
   const bool stopped = sent &&
       waitForActuatorCommand(ACTUATOR_COMMAND_STOP, sequence,
                              ACTUATOR_STATUS_IDLE);
-  Serial.println(stopped ? F("[I2C ACTUATOR] STOP confirmed")
-                         : F("[I2C ACTUATOR] STOP failed/no ACK"));
-  if (!stopped) armStopRetry(STOP_RETRY_KEEP_FAULT, true, false);
+  if (stopped) {
+    TRACE_PRINTLN(F("[I2C ACTUATOR] STOP confirmed"));
+  } else {
+    Serial.println(F("[I2C ACTUATOR] STOP failed/no ACK"));
+    armStopRetry(STOP_RETRY_KEEP_FAULT, true, false);
+  }
   return stopped;
 }
 
@@ -969,7 +1012,7 @@ void serviceStopRetry() {
     setCommandResult(F("FAILED"));
     queueRobotReport(F("STOP_CONFIRMED"));
   }
-  Serial.println(F("[SAFETY] all STOP outputs confirmed"));
+  TRACE_PRINTLN(F("[SAFETY] all STOP outputs confirmed"));
 }
 
 bool requireHomeCalibration() {
@@ -1026,7 +1069,7 @@ bool performHomeCalibration() {
   phaseStartedAt = millis();
   setCommandResult(F("COMPLETED"));
   queueRobotReport(F("HOME_CALIBRATED"));
-  Serial.println(F("[CALIBRATION] HOME synced; heading=ZONE2"));
+  TRACE_PRINTLN(F("[CALIBRATION] HOME synced; heading=ZONE2"));
   return true;
 }
 
@@ -1104,7 +1147,7 @@ bool startPlaceholderReturn() {
     return false;
   }
 
-  // 후진 시작/장애물 정지는 MotorUno D2/A1의 로컬 HC-SR04가 담당한다.
+  // 후진 시작/장애물 정지는 MotorUno A0/A1의 로컬 HC-SR04가 담당한다.
   // SensorUno는 I2C ACK와 status=OBSTACLE만 관찰한다.
   return startRouteTravel(STATION_HOME);
 }
@@ -1490,7 +1533,7 @@ bool closeTcpAfterFailure() {
 }
 
 bool connectWifi() {
-  Serial.println(F("[WIFI] ===== connection start ====="));
+  TRACE_PRINTLN(F("[WIFI] connection start"));
   bool atReady = sendAt("AT", "OK", 2500);
   if (!atReady && espBusySeen) {
     // busy 상태의 AT+RST/CIPCLOSE/+++는 복구 명령이 아니라 추가 입력일 뿐이다.
@@ -1532,20 +1575,19 @@ bool connectWifi() {
 
   snprintf_P(atBuffer, sizeof(atBuffer), PSTR("AT+CWJAP=\"%s\",\"%s\""),
              WIFI_SSID, WIFI_PASSWORD);
-  Serial.print(F("[WIFI] connecting SSID -> "));
-  Serial.println(WIFI_SSID);
+  TRACE_PRINT(F("[WIFI] connecting SSID -> "));
+  TRACE_PRINTLN(WIFI_SSID);
   if (!sendAt(atBuffer, "OK", 30000)) {
     Serial.println(F("[WIFI] AP connection failed"));
     return false;
   }
-  Serial.println(F("[WIFI] AP connection successful"));
+  TRACE_PRINTLN(F("[WIFI] AP connection successful"));
 
   if (!sendAt("AT+CIFSR", "OK", 4000)) {
     Serial.println(F("[WIFI] IP address query failed"));
     return false;
   }
-  Serial.println(F("[WIFI] IP address is shown in AT+CIFSR response above"));
-  Serial.println(F("[WIFI] ===== connection complete ====="));
+  TRACE_PRINTLN(F("[WIFI] connection complete"));
   return true;
 }
 
@@ -1785,7 +1827,7 @@ bool reportRobotStatus(bool heartbeatOnly) {
 
   if (!heartbeatOnly) finishRobotReport();
   lastHeartbeatAt = millis();
-  Serial.println(F("[STATUS] report complete"));
+  TRACE_PRINTLN(F("[STATUS] report complete"));
   return true;
 }
 
@@ -1816,7 +1858,7 @@ bool extractJsonLong(const char* key, long& output) {
 }
 
 bool pollServerCommand() {
-  Serial.println(F("[COMMAND] polling server"));
+  TRACE_PRINTLN(F("[COMMAND] polling server"));
   if (!fetchCommandResponse()) return false;
 
   char command[16];
@@ -1840,12 +1882,12 @@ bool pollServerCommand() {
     return false;
   }
 
-  Serial.print(F("[COMMAND] command="));
-  Serial.print(command);
-  Serial.print(F(", target_zone="));
-  Serial.print(nextTarget);
-  Serial.print(F(", action="));
-  Serial.println(nextAction);
+  TRACE_PRINT(F("[COMMAND] command="));
+  TRACE_PRINT(command);
+  TRACE_PRINT(F(", target_zone="));
+  TRACE_PRINT(nextTarget);
+  TRACE_PRINT(F(", action="));
+  TRACE_PRINTLN(nextAction);
 
   // 정지 ACK 재확인 중에는 어떤 새 이동/모듈 명령도 소비하지 않는다.
   // 로컬 STOP이 모두 확인된 뒤 다음 서버 poll에서 같은 revision을 처리한다.
@@ -1855,9 +1897,9 @@ bool pollServerCommand() {
   }
 
   if (nextRevision == lastCommandRevision) {
-    Serial.print(F("[COMMAND] revision "));
-    Serial.print(nextRevision);
-    Serial.println(F(" already handled"));
+    TRACE_PRINT(F("[COMMAND] revision "));
+    TRACE_PRINT(nextRevision);
+    TRACE_PRINTLN(F(" already handled"));
     // 서버가 잠시 끊겨 안전 정지했더라도 경로 위치가 확실하면, 실패 이벤트를
     // 먼저 보고한 뒤 동일 revision의 자동 명령을 딱 한 번 재개한다.
     if (retrySameRevisionAllowed && robotPhase == PHASE_TASK_COMPLETE &&
@@ -1882,8 +1924,8 @@ bool pollServerCommand() {
     return true;
   }
 
-  Serial.print(F("[COMMAND] new revision="));
-  Serial.println(nextRevision);
+  TRACE_PRINT(F("[COMMAND] new revision="));
+  TRACE_PRINTLN(nextRevision);
   acknowledgedRevision = nextRevision;
   setCommandResult(F("EXECUTING"));
   manualForwardActive = false;
@@ -1996,10 +2038,10 @@ bool pollServerCommand() {
     targetZone[sizeof(targetZone) - 1] = '\0';
     strncpy(targetAction, nextAction, sizeof(targetAction) - 1);
     targetAction[sizeof(targetAction) - 1] = '\0';
-    Serial.print(F("[CAR] NEW TASK target="));
-    Serial.print(targetZone);
-    Serial.print(F(", action="));
-    Serial.println(targetAction);
+    TRACE_PRINT(F("[CAR] NEW TASK target="));
+    TRACE_PRINT(targetZone);
+    TRACE_PRINT(F(", action="));
+    TRACE_PRINTLN(targetAction);
     startPlaceholderMovement();
   } else if (!strcmp_P(command, PSTR("RETURN_HOME"))) {
     const bool alreadyReturning = targetStation == STATION_HOME &&
@@ -2129,7 +2171,7 @@ void checkRfidArrival() {
     }
     if (millis() - lastRfidLogAt >= RFID_LOG_INTERVAL_MS) {
       lastRfidLogAt = millis();
-      Serial.println(F("[RFID] scanning... no card"));
+      TRACE_PRINTLN(F("[RFID] scanning... no card"));
     }
     return;
   }
@@ -2143,7 +2185,7 @@ void checkRfidArrival() {
     return;
   }
 
-  Serial.println(F("[RFID] card detected"));
+  TRACE_PRINTLN(F("[RFID] card detected"));
   if (!rfid.PICC_ReadCardSerial()) {
     Serial.println(F("[RFID] card UID read failed"));
     return;
@@ -2160,38 +2202,38 @@ void checkRfidArrival() {
   if (scannedStation == STATION_UNKNOWN && RFID_PLACEHOLDER_ACCEPT_ANY_CARD &&
       routeMoving) {
     scannedStation = expectedStation;
-    Serial.println(F("[RFID] PLACEHOLDER MODE -> expected station accepted"));
+    TRACE_PRINTLN(F("[RFID] placeholder accepted"));
   }
 
   // 먼저 모터를 정지시킨 뒤 로그를 출력해 고속 주행에서도 제동을 늦추지 않는다.
   processRouteRfid(scannedStation);
   if (scannedStation == STATION_ZONE2) {
-    Serial.println(F("[RFID] ARRIVAL CONFIRMED station=ZONE2"));
+    TRACE_PRINTLN(F("[RFID] ARRIVAL CONFIRMED station=ZONE2"));
   } else if (scannedStation == STATION_ZONE99) {
-    Serial.println(F("[RFID] ARRIVAL CONFIRMED station=ZONE99"));
+    TRACE_PRINTLN(F("[RFID] ARRIVAL CONFIRMED station=ZONE99"));
   } else {
     Serial.println(F("[RFID] UNREGISTERED"));
   }
 
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
-  Serial.println(F("[RFID] card processing complete"));
+  TRACE_PRINTLN(F("[RFID] card processing complete"));
 }
 
 void setup() {
   Serial.begin(USB_SERIAL_BAUD);
   esp8266.begin(9600);
 
-  Serial.println();
-  Serial.println(F("[BOOT] UNO CAR USB=115200 ESP=9600"));
-  Serial.println(F("[BOOT] ESP=5/6 RFID=8..12 I2C=A4/A5"));
-  Serial.println(F("[BOOT] DHT=Actuator D2 / rear HC=Motor D2,A1"));
-  Serial.println(F("[BOOT] route HOME>ZONE2>ZONE99"));
+  dht.begin();
 
-  // 전원/배선 진단: 정상 대기 중인 ESP TX는 보통 HIGH다. SensorUno의
-  // D2/D3/D4는 분배 후 비워 두며 ESP TX가 계속 LOW이면 전원/EN을 확인한다.
-  Serial.print(F("[PIN LEVEL] ESP_TX@D6="));
-  Serial.println(digitalRead(UNO_ESP_RX_PIN));
+  TRACE_PRINTLN();
+  TRACE_PRINTLN(F("[BOOT] SensorUno DHT=4 ESP=5/6 RFID=8..12"));
+
+  // 정상 대기 중 ESP TX와 DHT DATA는 보통 HIGH, HC ECHO는 LOW이다.
+  TRACE_PRINT(F("[PIN] ESP_TX="));
+  TRACE_PRINT(digitalRead(UNO_ESP_RX_PIN));
+  TRACE_PRINT(F(" DHT="));
+  TRACE_PRINTLN(digitalRead(DHT_PIN));
 
   // 저속 소프트 ACK 프로브는 버스 진단 스케치에서만 실행한다.
   // 정상 운전에서는 하드웨어 Wire 타임아웃과 슬레이브 상태 ACK를 사용한다.
@@ -2211,21 +2253,23 @@ void setup() {
   if (!bootMotorStopped || !bootModuleStopped) {
     queueRobotReport(F("BOOT_STOP_ERROR"));
   }
-  Serial.println(F("[RFID] software SPI initialization"));
+  TRACE_PRINTLN(F("[RFID] software SPI initialization"));
   rfid.PCD_Init();
   const byte rfidVersion = rfid.PCD_ReadRegister(SoftwareMFRC522::VersionReg);
   rfidReady = rfidVersion != 0x00 && rfidVersion != 0xFF;
-  Serial.print(F("[RFID] RC522 version=0x"));
-  if (rfidVersion < 0x10) Serial.print('0');
-  Serial.println(rfidVersion, HEX);
+  TRACE_PRINT(F("[RFID] RC522 version=0x"));
+  if (rfidVersion < 0x10) {
+    TRACE_PRINT('0');
+  }
+  TRACE_PRINTLN(rfidVersion, HEX);
   if (!rfidReady) {
     Serial.println(F("[RFID] ERROR: RC522 communication failed"));
   } else {
-    Serial.println(F("[RFID] RC522 communication OK, scanning started"));
+    TRACE_PRINTLN(F("[RFID] RC522 ready"));
   }
 
-  // ActuatorUno가 긴 Wi-Fi 초기화 중에도 로컬 DHT22와 기본 상태 화면을
-  // 표시할 수 있도록 첫 상태 telemetry를 먼저 보낸다.
+  // 긴 Wi-Fi 초기화 전에 첫 상태 telemetry를 보낸다. DHT 첫 측정 전에는
+  // invalid flag가 전달되며 이후 유효 측정값으로 자동 갱신된다.
   lastDisplaySentAt = millis() - DISPLAY_RETRY_MS;
   lastDisplayHeartbeatAt = millis() - DISPLAY_HEARTBEAT_MS;
   serviceDisplayTelemetry();
@@ -2236,13 +2280,17 @@ void setup() {
   // 최초 접속이 실패해도 setup 직후 다시 긴 접속 절차를 반복하지 않는다.
   // 15초 동안 센서/RFID/표시 telemetry와 안전 제어 loop를 먼저 실행한다.
   lastWifiReconnectAttemptAt = millis();
-  Serial.println(wifiReady ? F("[BOOT] WIFI OK") : F("[BOOT] WIFI ERROR"));
-  Serial.println(F("[BOOT] setup complete"));
-  Serial.println(F("================================"));
+  if (wifiReady) {
+    TRACE_PRINTLN(F("[BOOT] WIFI OK"));
+  } else {
+    Serial.println(F("[BOOT] WIFI ERROR"));
+  }
+  TRACE_PRINTLN(F("[BOOT] setup complete"));
   lastPollAt = millis() - POLL_INTERVAL_MS;
 }
 
 void loop() {
+  updateDhtSensor();
   applyMotorLinkState();
   serviceStopRetry();
   updatePlaceholderStateMachine();
@@ -2267,16 +2315,19 @@ void loop() {
     // 지연시키거나, 완료 전의 상태를 서버 ACK로 보내지 않는다.
     if (stopRetryMode != STOP_RETRY_NONE) return;
     lastPollAt = millis();
-    Serial.println(F("[LOOP] 3-second server poll"));
+    TRACE_PRINTLN(F("[LOOP] server poll"));
     if (!wifiReady) {
       if (millis() - lastWifiReconnectAttemptAt >= WIFI_RECONNECT_INTERVAL_MS) {
         lastWifiReconnectAttemptAt = millis();
-        Serial.println(F("[LOOP] Wi-Fi reconnect backoff elapsed -> reconnect"));
+        TRACE_PRINTLN(F("[LOOP] Wi-Fi reconnect"));
         wifiReady = connectWifi();
-        Serial.println(wifiReady ? F("[LOOP] Wi-Fi reconnect OK")
-                                 : F("[LOOP] Wi-Fi reconnect ERROR"));
+        if (wifiReady) {
+          TRACE_PRINTLN(F("[LOOP] Wi-Fi reconnect OK"));
+        } else {
+          Serial.println(F("[LOOP] Wi-Fi reconnect ERROR"));
+        }
       } else {
-        Serial.println(F("[LOOP] Wi-Fi reconnect backoff; local control remains active"));
+        TRACE_PRINTLN(F("[LOOP] Wi-Fi reconnect backoff"));
       }
     }
     if (wifiReady && !pollServerCommand()) {
@@ -2295,15 +2346,17 @@ void loop() {
         wifiReady = stillAssociated;
         consecutiveServerFailures = 0;
         if (!stillAssociated) lastWifiReconnectAttemptAt = millis();
-        Serial.println(stillAssociated
-            ? F("[LOOP] Wi-Fi is still associated; server will be retried")
-            : F("[LOOP] Wi-Fi association lost; reconnect required"));
+        if (stillAssociated) {
+          TRACE_PRINTLN(F("[LOOP] Wi-Fi associated; retry server"));
+        } else {
+          Serial.println(F("[LOOP] Wi-Fi association lost"));
+        }
       }
     } else if (wifiReady) {
       consecutiveServerFailures = 0;
-      Serial.println(F("[LOOP] command processing OK"));
+      TRACE_PRINTLN(F("[LOOP] command processing OK"));
       if (stopRetryMode != STOP_RETRY_NONE) {
-        Serial.println(F("[LOOP] STOP confirmation has priority over reporting"));
+        TRACE_PRINTLN(F("[LOOP] STOP confirmation pending"));
       } else if (robotReportPending) {
         // 실제 이벤트가 heartbeat보다 항상 먼저 전송된다.
         if (!reportRobotStatus()) {

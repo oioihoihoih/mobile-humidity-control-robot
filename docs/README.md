@@ -29,7 +29,7 @@
 
 | 표현 | 뜻 |
 | --- | --- |
-| 자동 검사 통과 | Python·호스트 C++·SimulIDE 프록시가 정의된 계약을 만족함 |
+| 자동 검사 통과 | Python·호스트 C++와 체크인 SimulIDE artifact가 각자 정의된 계약을 만족함; 현재 실물 DHT/HC 핀 배치 검증은 별도 |
 | 컴파일 통과 | 대상 보드용 바이너리를 만들 수 있음; 실물 동작을 뜻하지 않음 |
 | 벤치 검증 | 정지 상태 또는 바퀴를 띄운 상태의 연결·기본 통신·안전 출력 확인 |
 | 실차 검증 | 바닥 트랙에서 이동, RFID 판독, 제동과 복귀까지 관찰 |
@@ -44,4 +44,4 @@
 - 실행 예시는 저장소 루트 기준 상대 경로와 `<server-host>` 같은 자리표시자를 사용합니다.
 - 상태 표에는 무엇을 시험했는지와 무엇을 시험하지 않았는지를 함께 기록합니다.
 - 아키텍처가 바뀌면 [아키텍처 문서](architecture.md), API가 바뀌면 [API 문서](api.md), 검증 범위가 바뀌면 [테스트](testing.md)와 [한계](limitations.md)를 같은 변경에서 갱신합니다.
-- SensorUno에서 DHT22는 ActuatorUno D2로, 후방 HC-SR04는 MotorUno D2/A1로 분리했습니다. 분배 후 로컬 flash/SRAM은 SensorUno `27,190B / 1,396B`, MotorUno `11,446B / 468B`, ActuatorUno `15,452B / 554B`입니다. 환경별 문자열과 라이브러리에 따라 달라지므로 SensorUno CI 상한 `29,000B / 1,500B`와 RFID·I2C·HTTP 루프 지연을 함께 확인합니다.
+- 현재 로컬 flash/SRAM은 SensorUno `27,586B / 1,428B`, MotorUno `11,346B / 464B`, ActuatorUno `12,534B / 532B`입니다. SensorUno CI 상한 `29,000B / 1,500B`와 RFID·I2C·HTTP 루프 지연을 함께 확인합니다.

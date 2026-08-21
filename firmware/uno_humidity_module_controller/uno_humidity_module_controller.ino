@@ -1,12 +1,10 @@
 #include <Arduino.h>
-#include <DHT.h>
 #include <Wire.h>
 
 // [ActuatorUno / 하드웨어 I2C 슬레이브 주소 0x09]
 // SensorUno A4(SDA) -> ActuatorUno A4(SDA)
 // SensorUno A5(SCL) -> ActuatorUno A5(SCL)
 // 릴레이: 가습기=A0, 펠티어=A1, 냉각팬=D7
-// DHT22: DATA=D2 (ActuatorUno가 직접 측정)
 // LCD1602 I2C 백팩: SDA=D5, SCL=D4
 //
 // A4/A5는 SensorUno 명령 수신용 Wire 슬레이브 버스이고 D5/D4는
@@ -52,11 +50,6 @@ constexpr byte DISPLAY_FLAG_STALE = 0x08;
 constexpr byte HUMIDIFIER_RELAY_PIN = A0;
 constexpr byte PELTIER_RELAY_PIN = A1;
 constexpr byte COOLING_FAN_RELAY_PIN = 7;
-
-constexpr byte DHT_PIN = 2;
-constexpr byte DHT_TYPE = DHT22;
-constexpr unsigned long DHT_READ_INTERVAL_MS = 3000;
-DHT dht(DHT_PIN, DHT_TYPE);
 
 // LCD는 Wire를 사용하지 않고 아래 두 핀에서 open-drain으로 구동한다.
 constexpr byte LCD_SOFT_SDA_PIN = 5;
@@ -113,22 +106,19 @@ byte lastDisplaySeq = 0;
 byte currentDisplayState = DISPLAY_STATE_IDLE;
 byte currentZoneCode = 0;
 byte currentInputFlags = 0;
+int16_t currentTemperatureTenths = 0;
+uint16_t currentHumidityTenths = 0;
 bool telemetryReceived = false;
-// VALID 회신은 10바이트 표시 프레임의 magic/CRC가 정상 적용됐다는 ACK다.
-// 프레임 안의 온습도와 DISPLAY_INPUT_VALID 비트는 호환 목적으로만 받고
-// 사용하지 않는다. LCD 첫 줄은 아래 로컬 DHT22 값만 사용한다.
+// VALID 회신은 DHT 값 자체가 아니라 10바이트 프레임의 magic/CRC가
+// 정상적으로 적용됐다는 ACK다. DHT 유효성은 currentInputFlags bit0로
+// 별도 보존해 LCD에 DHT22 ERROR를 표시한다.
 bool displayFrameValid = false;
+bool telemetryDataValid = false;
 bool telemetryStale = true;
 unsigned long lastTelemetryAt = 0;
 unsigned int displayCrcErrorCount = 0;
 unsigned int displayMagicErrorCount = 0;
 unsigned int displayPayloadErrorCount = 0;
-
-int16_t localTemperatureTenths = 0;
-uint16_t localHumidityTenths = 0;
-bool localDhtReadAttempted = false;
-bool localDhtValid = false;
-unsigned long lastDhtReadAt = 0;
 
 // LCD 오류는 릴레이 STATUS와 독립적이다.
 bool lcdReady = false;
@@ -547,22 +537,22 @@ void setPaddedLine(byte row, const char* text) {
 
 void formatDisplayLines() {
   char line[17];
-  if (!localDhtReadAttempted) {
-    setPaddedLine(0, "DHT22 STARTING");
-  } else if (!localDhtValid) {
+  if (telemetryStale) {
+    setPaddedLine(0, "TELEMETRY STALE");
+  } else if (!telemetryDataValid) {
     setPaddedLine(0, "DHT22 ERROR");
   } else {
-    const long temperature = localTemperatureTenths;
+    const long temperature = currentTemperatureTenths;
     const unsigned int absoluteTemperature = static_cast<unsigned int>(
         temperature < 0 ? -temperature : temperature);
     if (temperature < 0) {
       snprintf_P(line, sizeof(line), PSTR("T:-%u.%uC H:%u.%u%%"),
                  absoluteTemperature / 10, absoluteTemperature % 10,
-                 localHumidityTenths / 10, localHumidityTenths % 10);
+                 currentHumidityTenths / 10, currentHumidityTenths % 10);
     } else {
       snprintf_P(line, sizeof(line), PSTR("T:%u.%uC H:%u.%u%%"),
                  absoluteTemperature / 10, absoluteTemperature % 10,
-                 localHumidityTenths / 10, localHumidityTenths % 10);
+                 currentHumidityTenths / 10, currentHumidityTenths % 10);
     }
     setPaddedLine(0, line);
   }
@@ -778,23 +768,33 @@ void serviceDisplayMailbox() {
 
   const byte nextState = frame[2];
   const byte nextZone = frame[3];
+  const uint16_t nextHumidityTenths = static_cast<uint16_t>(frame[6]) |
+                                      (static_cast<uint16_t>(frame[7]) << 8);
   const bool zoneValid = nextZone == 0 || nextZone == 2 ||
                          nextZone == 99 || nextZone == 0xFF;
-  if (nextState > DISPLAY_STATE_ERROR || !zoneValid) {
+  if (nextState > DISPLAY_STATE_ERROR || !zoneValid ||
+      nextHumidityTenths > 1000) {
     // payload 오류는 표시 프레임만 폐기한다. 릴레이 명령/상태/타이머는
     // 절대로 바꾸지 않으며 seq ACK도 갱신하지 않아 SensorUno가 재전송한다.
     ++displayPayloadErrorCount;
     Serial.print(F("[DISPLAY ERROR] invalid payload state="));
     Serial.print(nextState);
     Serial.print(F(" zone="));
-    Serial.println(nextZone);
+    Serial.print(nextZone);
+    Serial.print(F(" humidity_tenths="));
+    Serial.println(nextHumidityTenths);
     return;
   }
 
   lastDisplaySeq = frame[1];
   currentDisplayState = nextState;
   currentZoneCode = nextZone;
+  currentTemperatureTenths = static_cast<int16_t>(
+      static_cast<uint16_t>(frame[4]) |
+      (static_cast<uint16_t>(frame[5]) << 8));
+  currentHumidityTenths = nextHumidityTenths;
   currentInputFlags = frame[8];
+  telemetryDataValid = (currentInputFlags & DISPLAY_INPUT_VALID) != 0;
   telemetryReceived = true;
   displayFrameValid = true;
   telemetryStale = false;
@@ -811,47 +811,16 @@ void serviceDisplayMailbox() {
   Serial.print(currentDisplayState);
   Serial.print(F(" zone="));
   Serial.print(currentZoneCode);
+  Serial.print(F(" T="));
+  Serial.print(currentTemperatureTenths / 10);
+  Serial.print('.');
+  Serial.print(abs(currentTemperatureTenths % 10));
+  Serial.print(F(" H="));
+  Serial.print(currentHumidityTenths / 10);
+  Serial.print('.');
+  Serial.print(currentHumidityTenths % 10);
   Serial.print(F(" input_flags=0x"));
   Serial.println(currentInputFlags, HEX);
-}
-
-// DHT22는 측정 중 잠시 시간을 사용하므로 반드시 릴레이 명령과 타이머를
-// 처리한 다음 호출한다. 실패해도 LCD 첫 줄만 오류로 바꾸며 릴레이 출력과
-// actuatorStatus/statusReply는 절대로 건드리지 않는다.
-void serviceLocalDht() {
-  const unsigned long now = millis();
-  if (now - lastDhtReadAt < DHT_READ_INTERVAL_MS) return;
-  lastDhtReadAt = now;
-
-  const float humidity = dht.readHumidity();
-  const float temperature = dht.readTemperature();
-  localDhtReadAttempted = true;
-
-  if (isnan(humidity) || isnan(temperature) ||
-      humidity < 0.0f || humidity > 100.0f ||
-      temperature < -40.0f || temperature > 80.0f) {
-    localDhtValid = false;
-    formatDisplayLines();
-    scheduleFullLcdRender();
-    Serial.println(F("[DHT22 ERROR] D2 local read failed; relay state unchanged"));
-    return;
-  }
-
-  localTemperatureTenths = static_cast<int16_t>(
-      temperature * 10.0f + (temperature < 0.0f ? -0.5f : 0.5f));
-  localHumidityTenths = static_cast<uint16_t>(humidity * 10.0f + 0.5f);
-  localDhtValid = true;
-  formatDisplayLines();
-  scheduleFullLcdRender();
-
-  Serial.print(F("[DHT22] local D2 T="));
-  Serial.print(localTemperatureTenths / 10);
-  Serial.print('.');
-  Serial.print(abs(localTemperatureTenths % 10));
-  Serial.print(F(" H="));
-  Serial.print(localHumidityTenths / 10);
-  Serial.print('.');
-  Serial.println(localHumidityTenths % 10);
 }
 
 void serviceDisplayStaleness() {
@@ -936,13 +905,6 @@ void handleSerialTestCommand() {
     Serial.print(displayMagicErrorCount);
     Serial.print(F(" payload="));
     Serial.println(displayPayloadErrorCount);
-    Serial.print(F("[DIAG DHT22] D2 valid="));
-    Serial.print(localDhtValid ? F("YES") : F("NO"));
-    Serial.print(F(" attempted="));
-    Serial.print(localDhtReadAttempted ? F("YES") : F("NO"));
-    Serial.print(F(" age_ms="));
-    if (localDhtReadAttempted) Serial.println(millis() - lastDhtReadAt);
-    else Serial.println(F("NONE"));
     Serial.print(F("[DIAG I2C REPLY] "));
     for (byte index = 0; index < sizeof(replySnapshot); ++index) {
       if (index) Serial.print(' ');
@@ -978,9 +940,6 @@ void setup() {
   Serial.println(F("[BOOT STEP 1] ActuatorUno setup entered"));
   Serial.println(F("[BOOT STEP 2] all outputs forced OFF"));
 
-  dht.begin();
-  lastDhtReadAt = millis();
-
   publishStatusReply(STATUS_IDLE, COMMAND_STOP, 0);
   Wire.begin(I2C_ADDRESS);
   Wire.setWireTimeout(WIRE_TIMEOUT_US, true);
@@ -991,9 +950,8 @@ void setup() {
   Serial.println(F("[BOOT] ActuatorUno I2C slave started"));
   Serial.println(F("[BOOT] Sensor bus: address=0x09 A4=SDA A5=SCL"));
   Serial.println(F("[BOOT] relays: humidifier=A0 peltier=A1 fan=D7 (active-low)"));
-  Serial.println(F("[BOOT] DHT22: local DATA=D2, LCD sample every 3s"));
   Serial.println(F("[BOOT] LCD: Software I2C D5=SDA D4=SCL, 0x27 then 0x3F"));
-  Serial.println(F("[BOOT] display frame: D1 seq state zone reserved4 flags crc8"));
+  Serial.println(F("[BOOT] display frame: D1 seq state zone tempLE humLE flags crc8"));
   Serial.println(F("[BOOT] serial test: 1=humidifier 2=peltier+fan 0=off ?=diagnostics"));
 }
 
@@ -1001,14 +959,6 @@ void loop() {
   // 안전/릴레이 처리를 LCD보다 항상 먼저 실행한다.
   serviceWireTimeout();
   handleSerialTestCommand();
-  serviceCommandMailbox();
-  serviceActuatorTask();
-
-  serviceLocalDht();
-
-  // DHT 읽기 도중 도착한 I2C 명령이나 만료된 릴레이 타이머를 LCD보다
-  // 먼저 즉시 반영한다.
-  serviceWireTimeout();
   serviceCommandMailbox();
   serviceActuatorTask();
 

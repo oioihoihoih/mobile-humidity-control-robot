@@ -7,6 +7,11 @@ ActuatorUno를 독립된 ATmega328P로 실행하고 A4/A5 I2C 계약과 상태 �
 이 회로의 목적은 **프로토콜·인터록·상태 머신 검증**이다. 실제 로봇을 디지털
 트윈으로 재현하지 않으며, 하드웨어 성능이나 통합 완료를 증명하지 않는다.
 
+> 최신 실물의 DHT22는 SensorUno D4, 후방 HC-SR04는 MotorUno
+> `ECHO=A0`/`TRIG=A1`이며 ActuatorUno는 Sensor의 원격 telemetry를 표시한다.
+> 이 프록시의 이전 센서 배치는 그대로 보존했으므로 현재 실물 구조의 검증
+> 근거로 제출하지 않는다.
+
 ## 구성
 
 | 보드 | I2C 역할 | 프록시 기능 |
@@ -39,7 +44,7 @@ Motor 상태 바이트를 `0xE0` 계열, Actuator 상태 바이트를 `0xF0` 계
 
 ## 하드웨어와 프록시 대응
 
-| 실제 계약 | 회로 입력/출력 |
+| 체크인 프록시 내부 계약 | 회로 입력/출력 |
 | --- | --- |
 | 자동차 DHT22, ActuatorUno D2 | SimulIDE `Dht22` 모델; Actuator가 직접 읽어 LCD 첫 줄 표시 |
 | 서버 명령 | SensorUno 명령 버튼 |
@@ -53,10 +58,10 @@ Motor 상태 바이트를 `0xE0` 계열, Actuator 상태 바이트를 `0xF0` 계
 프록시 버튼은 서버나 RFID 리더가 이미 판정한 이벤트를 주입한다. 회로는
 ESP-01 AT, Wi-Fi HTTP, 카드 RF 판독, 태그 거리, 모터 전류·토크, 실제 릴레이
 접점, 고전력 부하와 열·결로를 검증하지 않는다. 뒤쪽 N20 축에 설치해
-MotorUno `ECHO=D2`, `TRIG=A1`로 연결하는 HC-SR04의 **복귀 후진 로컬
+프록시 펌웨어가 MotorUno `ECHO=D2`, `TRIG=A1`로 가정한 HC-SR04의 **복귀 후진 로컬
 안전 보조**도 이 회로에서는 제외한다. Motor 프록시 D2~D8/D11은 실제 shield
 핀이 아니라 네 채널 방향을 보여주는 LED이므로 HC-SR04를 함께 연결하지 않는다.
-실물 운영 코드는 후진 중 `STUCK_HIGH` 또는 유효한 15cm 미만에서 로컬
+최신 실물 운영 코드는 A0/A1에서 후진 중 `STUCK_HIGH` 또는 유효한 15cm 미만에서 로컬
 PAUSE하고 18cm 이상 유효값 3회에서만 자동 재개한다. 후진 출발 전 sample
 gate는 없으며 `NO_ECHO`와 `OUT_OF_RANGE`는 진단만 남긴다.
 

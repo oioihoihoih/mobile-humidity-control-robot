@@ -8,17 +8,13 @@
 | --- | --- | --- | --- |
 | Python 서버 단위시험 | 자동화됨 | 임무 우선순위, stale·히스테리시스, DB 워터마크, 명령·ACK와 제어 API 계약 | 실제 MySQL 설치 상태, Wi-Fi 품질, 실차 |
 | 3-Uno 프로토콜·폐루프 모델 | 자동화됨 | calibration, 경로 순서, RFID 이벤트, watchdog, actuator sequence/CRC와 실패 흐름 | 실제 I2C 신호 품질, 카드 판독 거리, 모터 관성 |
-| SimulIDE 계약 검사 | 자동화됨 | 현재 회로 파일, 프록시 펌웨어와 빌드 manifest의 일치 | ESP-01 RF 통신, 실제 RC522, 고전력 부하 |
+| SimulIDE artifact 검사 | 자동화됨 | 체크인된 이전 배치 회로, 프록시 펌웨어와 빌드 manifest의 파일 일치 | 현재 Sensor D4 DHT·Motor A0/A1 HC 배치, ESP-01 RF, 실제 RC522, 고전력 부하 |
 | Uno 운영 스케치 컴파일 | CI 게이트 제공 | 대상 Uno용 세 운영 스케치가 빌드 가능한지 확인 | 보드 업로드 성공과 런타임 안정성 |
 | 이전 3-Uno·2모터 벤치 | 제한적 기록 | 정지 상태 연결, 기본 통신, RFID 정지와 안전 출력의 과거 기록 | 현재 M3/M4 방향·전류, 4모터 동시 동작, 새 후진 로직 |
 | 현재 4모터 하드웨어 | 미검증 | 아직 현재 커밋 대응 실물 증거 없음 | M1~M4 전·후진, 라인 추종, RFID 제동, 후방 센서, 고전력 임무 |
 | 실차·부하 통합 | 미검증 | 아직 완료 증거 없음 | — |
 
-현재 회귀시험 구성은 서버 39개와 `tests/` 129개, 총 168개입니다.
-2026-08-21 Arduino AVR core 1.8.8과 공개 예제 설정의 로컬 빌드는
-SensorUno flash/SRAM `27,190B / 1,396B`, MotorUno `11,446B / 468B`,
-ActuatorUno `15,452B / 554B`입니다. CI budget은 SensorUno flash
-`29,000B`, SRAM `1,500B`이며 CI의 고정 라이브러리 결과를 최종 기준으로 사용합니다.
+회귀시험 개수는 릴리스 커밋에서 `python scripts/check.py`를 실행해 기록합니다. 현재 로컬 flash/SRAM은 SensorUno `27,586B / 1,428B`, MotorUno `11,346B / 464B`, ActuatorUno `12,534B / 532B`이며 SensorUno firmware budget은 `29,000B / 1,500B`입니다. CI의 고정 라이브러리 결과를 최종 기준으로 사용합니다.
 
 ## 전체 오프라인 검사
 
@@ -35,7 +31,7 @@ python scripts/check.py
 2. `tests/test_*.py`의 3-Uno 프로토콜·폐루프 시험
 3. `simulide/validate_sim2.py`의 회로·펌웨어 manifest 검사
 
-마지막 줄의 `All offline checks passed.`는 위 세 묶음이 현재 작업본에서 통과했다는 뜻입니다. 현재 기대값은 서버 39개 + 프로토콜·폐루프 129개 = 168개이지만, 테스트 개수는 소스가 늘면 바뀔 수 있으므로 실행 결과와 CI run을 근거로 사용합니다.
+마지막 줄의 `All offline checks passed.`는 위 세 묶음이 현재 작업본에서 통과했다는 뜻입니다. 테스트 개수는 소스와 검증 항목이 바뀌면 달라지므로 실행 결과와 같은 커밋의 CI run을 근거로 사용합니다.
 
 ## 개별 검사
 
@@ -71,7 +67,7 @@ python simulide/validate_sim2.py
 CI에는 실제 Wi-Fi 자격증명이나 제어 토큰을 넣지 않습니다. SensorUno는 특히 다음을 확인합니다.
 
 - 프로그램 저장공간 초과 여부와 flash `29,000B` budget
-- 전역·정적 SRAM과 `1,500B` budget 및 남는 스택 여유
+- 전역·정적 SRAM `1,500B` budget 및 남는 스택 여유
 - 새 문자열이 `F()` 또는 `PROGMEM` 없이 SRAM을 소비하지 않는지
 - 긴 HTTP/AT 처리로 RFID 스캔, I2C keepalive와 안전 정지가 지연되지 않는지
 
@@ -107,9 +103,9 @@ python server/server.py
 | 3-Uno I2C | SensorUno가 MotorUno와 ActuatorUno를 서로 다른 주소에서 식별하고 잘못된 ACK를 성공으로 처리하지 않음 |
 | HOME 동기화 | 넓은 마커 조건과 사용자 방향 확인 뒤에만 `CALIBRATE_HOME` 완료 ACK |
 | watchdog | SensorUno keepalive가 끊기면 MotorUno가 제한시간 뒤 스스로 정지 |
-| 후방 초음파 | MotorUno D2/A1 로컬 로직이 후진 중 15cm 미만·STUCK_HIGH에서 정지하고, 18cm 이상 3회에서만 로컬 재개 |
+| 후방 초음파 | MotorUno A0/A1에서 후진 중 15cm 미만·`STUCK_HIGH` 로컬 정지, 18cm 이상 3회 뒤 재개; 전진에는 영향 없음 |
 | actuator | 고전력 부하 없이 명령·sequence·CRC와 자동 OFF를 확인 |
-| DHT/LCD 격리 | ActuatorUno D2 읽기·D5/D4 표시 오류가 릴레이 안전 상태를 우회하거나 임의 가동을 만들지 않음 |
+| DHT/LCD telemetry 격리 | SensorUno D4의 온·습도 10바이트 telemetry가 ActuatorUno D5/D4 LCD에 표시되고, 표시 오류가 릴레이 안전 상태를 우회하거나 임의 가동을 만들지 않음 |
 
 사진이나 로그에는 Wi-Fi 자격증명, 내부 주소, 시리얼 포트, RFID UID와 제어 토큰이 보이지 않게 가립니다.
 
@@ -123,8 +119,8 @@ python server/server.py
 4. `HOME → ZONE2 → ZONE99 → ZONE2 → HOME` 무부하 왕복
 5. RFID 누락·순서 오류, SensorUno 재부팅, I2C 단선과 Wi-Fi 끊김 고장 주입
 6. 가습·제습 부하를 하나씩 연결해 전류, 전압 강하, 발열과 자동 OFF 측정
-7. 후진 중 15cm 미만 장애물 PAUSE와 18cm 이상 연속 확인 후 RESUME 검증
-8. 후진 첫 sample 전 이동거리와 주행 중 STUCK_HIGH의 로컬 PAUSE, `NO_ECHO`·`OUT_OF_RANGE` 진단 검증
+7. MotorUno `ECHO=A0`/`TRIG=A1`에서 후진 중 15cm 미만·`STUCK_HIGH` 로컬 정지와 18cm 이상 3회 뒤 재개 검증
+8. `NO_ECHO`·`OUT_OF_RANGE`가 새 정지를 만들지 않고 기존 장애물 래치도 해제하지 않는지, SensorUno PAUSE가 별도로 유지되는지 검증
 9. 최악 조건에서 모터와 액추에이터를 함께 쓸 때 전원·퓨즈·방열 검증
 10. 실제 공간 또는 시험 상자에서 임무 전후 습도 변화량과 재측정 시간 확인
 

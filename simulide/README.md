@@ -5,6 +5,11 @@
 이 회로는 3 Uno 프로토콜과 상태 전이를 검토하는 **논리 프록시**이며, 실제
 자동차의 RF, 전력, 기구 성능을 시뮬레이션하지 않는다.
 
+> **현재 실물 구조와 다름:** 최신 운영 배선은 SensorUno D4 DHT22,
+> MotorUno `ECHO=A0`/`TRIG=A1` HC-SR04, ActuatorUno 원격 10바이트
+> telemetry/LCD이다. 아래 체크인 프록시는 이전 주변기기 배치를 보존하며 이번
+> 변경의 시뮬레이션·검증 근거가 아니다. 실물 핀맵은 `docs/hardware.md`를 따른다.
+
 - SensorUno: I2C master, 서버·RFID·HOME 입력과 임무 조율 프록시
 - MotorUno: I2C slave `0x08`, HOME interlock, 라인 입력과 M1~M4 4WD 출력 프록시
 - ActuatorUno: I2C slave `0x09`, D2 DHT22, 가습·펠티어·팬 출력과 LCD 프록시
@@ -21,7 +26,7 @@
 
 ## 프록시가 표현하는 것
 
-| 하드웨어/서비스 계약 | SimulIDE 표현 |
+| 체크인 프록시 내부 계약 | SimulIDE 표현 |
 | --- | --- |
 | 서버 명령과 복귀 명령 | 버튼 입력 |
 | ZONE2/ZONE99 태그 판정 결과 | RFID 이벤트 버튼; 실제 UID 없음 |
@@ -31,7 +36,8 @@
 | active-low 릴레이와 고전력 부하 | 가습·펠티어·팬 LED |
 | LCD1602 I2C 백팩 | `I2CToParallel` + `Hd44780` 16×2 |
 
-DHT22는 운영 역할과 같이 ActuatorUno D2에서 직접 읽고 LCD 첫 줄에 표시한다.
+현재 체크인 프록시는 과거 배치처럼 ActuatorUno D2에서 DHT22를 직접 읽어
+LCD 첫 줄에 표시한다.
 SensorUno의 10바이트 표시 프레임은 상태·구역·flags를 전달하며 기존 온·습도
 4바이트는 0인 예약 필드로 유지한다. ESP-01 AT 펌웨어, 실제 HTTP,
 RC522 무선 판독, 모터 전류·토크·제동 거리, 릴레이 접점과 펠티어 열 거동은
@@ -39,8 +45,8 @@ RC522 무선 판독, 모터 전류·토크·제동 거리, 릴레이 접점과 �
 실제 부하가 동작했다는 증거가 아니다.
 
 Motor 프록시에서 명령 `0x11`은 M1~M4 전진, 명령 `0x12`는 차체를 돌리지 않는
-M1~M4 직선 후진(`REVERSE_HOME`)이다. N20 축 뒤쪽의 HC-SR04는 실물에서
-MotorUno `ECHO=D2`, `TRIG=A1`에 연결되고 후진 중 로컬 정지를 담당하지만,
+M1~M4 직선 후진(`REVERSE_HOME`)이다. 체크인 프록시 펌웨어가 가정한
+HC-SR04 배치는 MotorUno `ECHO=D2`, `TRIG=A1`이지만,
 이 회로에는 거리 모델이 없다. 프록시의 D2~D8/D11은 AFMotor 채널 방향을
 보여주는 시뮬레이션 전용 LED이므로 실물 핀맵이 아니다. 따라서 15cm 미만·
 `STUCK_HIGH` 정지와 18cm 이상 3회 재개는 프록시 검증 결과에 포함하지 않는다.

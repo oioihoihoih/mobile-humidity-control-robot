@@ -42,8 +42,7 @@
 
 - 고정 DHT 센서는 응답이 느리고 설치 위치·공기 흐름의 영향을 받습니다. 한 점의 값이 구역 전체 습도를 대표한다고 보장할 수 없습니다.
 - 온도 범위 이탈은 대시보드 경고만 만들며 냉난방 임무는 생성하지 않습니다.
-- 초음파 센서는 N20 후륜 쪽을 바라보고 MotorUno `ECHO=D2`, `TRIG=A1`에서 로컬로 처리합니다. 후진 중 15cm 미만 또는 `STUCK_HIGH`에서 PAUSE하고, 유효한 18cm 이상을 3회 확인해야 재개합니다. 후진 출발 전 sample gate는 두지 않아 첫 측정 전 잠시 이동할 수 있으므로 물리 비상정지와 저속 시험이 필요합니다. `NO_ECHO`·`OUT_OF_RANGE`는 넓은 공간일 수 있어 진단만 남기므로 단일 센서가 충돌 방지를 보장하지 않습니다.
-- ActuatorUno D2의 차량 DHT22는 LCD 표시용 로컬 측정입니다. 읽기 실패는 LCD에만 표시되고 릴레이 시퀀스를 중단하지 않으므로, LCD 값만으로 실제 환경 제어 성공을 판단하면 안 됩니다.
+- 초음파 센서는 N20 후륜 쪽을 바라보고 MotorUno `ECHO=A0`/`TRIG=A1`에 연결됩니다. 후진 중 15cm 미만 또는 `STUCK_HIGH`이면 MotorUno가 로컬 정지하고, 유효한 18cm 이상을 3회 확인해야 재개합니다. `NO_ECHO`·`OUT_OF_RANGE`는 새 정지를 만들지 않고 이미 걸린 래치를 풀지도 않는 진단값이므로, 단일 센서가 충돌 방지를 보장하지 않습니다.
 - 기본 stale 제한과 히스테리시스는 데모용 초기값입니다. 센서 전송 주기와 실제 공간 응답을 측정해 조정해야 합니다.
 - 완료한 측정 ID를 MySQL에 소비 처리해 반복 가동을 막지만, DB 손상·수동 변경·잘못된 장치 데이터까지 방어하는 안전 PLC는 아닙니다.
 - 소프트웨어 `ALL_STOP`, I2C watchdog과 제한시간은 물리 비상 정지 회로를 대체하지 않습니다.
@@ -83,12 +82,7 @@
 
 ## SensorUno 자원 한계
 
-자원 분배 후 공개 예제 설정의 로컬 빌드는 SensorUno
-flash/SRAM `27,190B / 1,396B`, MotorUno `11,446B / 468B`, ActuatorUno
-`15,452B / 554B`입니다. SensorUno는 여전히 ESP-01 AT/HTTP, RC522
-software-SPI, 경로 상태와 두 I2C slave 조율을 함께 담아 자원 제약이
-큽니다. CI의 SensorUno flash budget은 `29,000B`, SRAM budget은
-`1,500B`이며 실제 설정 문자열과 라이브러리 버전에 따라 결과가 달라집니다.
+SensorUno는 ESP-01 AT/HTTP, RC522, DHT22, 경로 상태와 두 I2C slave 조율을 함께 담당하므로 Uno R3 자원 여유가 작습니다. 후방 HC-SR04를 MotorUno로 옮긴 현재 로컬 빌드는 flash/SRAM `27,586B / 1,428B`이고 CI budget은 `29,000B / 1,500B`입니다. 같은 빌드의 MotorUno는 `11,346B / 464B`, ActuatorUno는 `12,534B / 532B`입니다.
 
 - 작은 라이브러리·로그·파서 추가도 flash budget을 넘길 수 있습니다.
 - 플래시가 남아도 SRAM 부족이나 스택 충돌이 발생할 수 있습니다.
@@ -99,7 +93,7 @@ software-SPI, 경로 상태와 두 I2C slave 조율을 함께 담아 자원 제�
 
 ## 시뮬레이션 한계
 
-SimulIDE 회로는 지원되지 않는 ESP-01, RF 환경, 실제 RC522와 고전력 부하를 버튼·LED·프록시 펌웨어로 대신합니다.
+SimulIDE 회로는 지원되지 않는 ESP-01, RF 환경, 실제 RC522와 고전력 부하를 버튼·LED·프록시 펌웨어로 대신합니다. 체크인 artifact는 이전 주변기기 배치를 보존하며, 현재 SensorUno D4 DHT22·MotorUno A0/A1 HC-SR04 핀맵의 검증 근거가 아닙니다.
 
 검증 가능한 것:
 

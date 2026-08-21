@@ -5,7 +5,7 @@
 // [MotorUno / I2C 슬레이브 주소 0x08]
 // SensorUno SDA/SCL -> A4/A5
 // 왼쪽/오른쪽 IR  -> D9/D10
-// 후방 HC-SR04     -> ECHO D2(INT0), TRIG A1
+// 후방 HC-SR04     -> ECHO A0(PCINT8), TRIG A1
 // 모터 실드 M1/M3 -> 왼쪽 축, M2/M4 -> 오른쪽 축
 // M1/M2는 기존 모터, M3/M4는 새 N20 1:298 후륜 모터
 
@@ -46,7 +46,7 @@ constexpr byte STATUS_PROTOCOL_REQUIRED = 8;
 
 constexpr byte LEFT_IR_PIN = 9;
 constexpr byte RIGHT_IR_PIN = 10;
-constexpr byte ULTRASONIC_ECHO_PIN = 2;
+constexpr byte ULTRASONIC_ECHO_PIN = A0;
 constexpr byte ULTRASONIC_TRIG_PIN = A1;
 
 // 후방 초음파 센서는 RETURN(후진) 중에만 모터를 제어한다. 15cm 미만이면
@@ -151,8 +151,8 @@ unsigned long bothHighStartedAt = 0;
 unsigned long lastSensorLogAt = 0;
 unsigned long lastValidControlAt = 0;
 
-// D2의 CHANGE ISR은 에지 시각만 기록한다. 거리 계산, 모터 제어, Serial은
-// 모두 loop()에서 처리해 I2C와 모터 제어 인터럽트를 오래 막지 않는다.
+// A0(PCINT8)의 ISR은 PINC를 직접 읽고 에지 시각/상태만 기록한다.
+// 거리 계산, 모터 제어, Serial, I2C는 모두 loop()에서 처리한다.
 volatile unsigned long ultrasonicEchoRiseUs = 0;
 volatile unsigned long ultrasonicEchoPulseUs = 0;
 volatile bool ultrasonicEchoRiseSeen = false;
@@ -165,9 +165,10 @@ unsigned int lastUltrasonicDistanceCm = 0;
 unsigned long ultrasonicTriggerStartedUs = 0;
 unsigned long lastUltrasonicSampleAt = 0;
 
-void captureUltrasonicEcho() {
+ISR(PCINT1_vect) {
+  const bool echoHigh = (PINC & _BV(PC0)) != 0;
   const unsigned long nowUs = micros();
-  if (digitalRead(ULTRASONIC_ECHO_PIN) == HIGH) {
+  if (echoHigh) {
     ultrasonicEchoRiseUs = nowUs;
     ultrasonicEchoRiseSeen = true;
   } else if (ultrasonicEchoRiseSeen) {
@@ -972,8 +973,14 @@ void setup() {
   pinMode(ULTRASONIC_ECHO_PIN, INPUT);
   pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
   digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-  attachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN),
-                  captureUltrasonicEcho, CHANGE);
+  // A0(PCINT8)만 PCINT1 그룹에서 활성화한다. ISR은 에지
+  // timestamp만 남기므로 I2C/모터 처리를 블로킹하지 않는다.
+  const byte savedSreg = SREG;
+  noInterrupts();
+  PCIFR = _BV(PCIF1);       // 이전 pending 플래그를 먼저 제거
+  PCMSK1 |= _BV(PCINT8);    // A0 / PC0
+  PCICR |= _BV(PCIE1);      // PCINT[14:8] 그룹
+  SREG = savedSreg;
 
   setCruiseSpeeds();
   calibrated = false;
@@ -987,7 +994,7 @@ void setup() {
 
   Serial.println(F("[BOOT] MotorUno I2C slave started"));
   Serial.println(F("[BOOT] address=0x08 SDA=A4 SCL=A5"));
-  Serial.println(F("[BOOT] IR=D9/D10, rear HC-SR04 ECHO=D2 TRIG=A1"));
+  Serial.println(F("[BOOT] IR=D9/D10, rear HC-SR04 ECHO=A0 TRIG=A1 (PCINT8)"));
   Serial.println(F("[BOOT] 4WD: M1/M3=LEFT, M2/M4=RIGHT"));
   Serial.print(F("[BOOT] PWM existing M1/M2="));
   Serial.print(EXISTING_AXLE_SPEED);

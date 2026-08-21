@@ -180,15 +180,12 @@ Copy-Item firmware/zone99_esp01_dht11/secrets.example.h firmware/zone99_esp01_dh
 | MotorUno | `firmware/uno_line_tracker_motor_controller/uno_line_tracker_motor_controller.ino` |
 | ActuatorUno | `firmware/uno_humidity_module_controller/uno_humidity_module_controller.ino` |
 
-2026-08-21 자원 분배 후 공개 예제 설정의 로컬 빌드는
-SensorUno flash/SRAM `27,190B / 1,396B`, MotorUno `11,446B / 468B`,
-ActuatorUno `15,452B / 554B`입니다. DHT22는 ActuatorUno D2로,
-후방 HC-SR04는 MotorUno `ECHO=D2`, `TRIG=A1`로 이전했습니다.
-배선을 먼저 바꾼 뒤 세 보드를 같은 커밋으로 연속 업로드하세요.
-기능·로그·라이브러리를 바꾼 뒤에는 CI 또는 Arduino CLI에서
-보드별 flash/SRAM과 메인 루프 지연을 다시 확인하세요.
+현재 로컬 flash/SRAM은 SensorUno `27,586B / 1,428B`, MotorUno
+`11,346B / 464B`, ActuatorUno `12,534B / 532B`이며 SensorUno CI budget은
+`29,000B / 1,500B`입니다. 업로드 전 같은 커밋의 CI 또는 Arduino CLI 결과를
+확인하고, 기능·로그·라이브러리를 바꾼 뒤에는 세 스케치와 루프 지연을 다시 측정하세요.
 
-SensorUno와 MotorUno는 4모터 절대 전진/후진에 versioned 명령 `0x11/0x12`를 사용하므로 두 보드를 같은 커밋으로 연속 업로드합니다. 일부만 업로드하면 구형 값 `1/2`가 INVALID이거나 `PROTOCOL_SYNC(7)` handshake가 실패해 주행이 잠기는 것이 정상입니다. ActuatorUno도 같은 릴리스로 맞춘 뒤 세 보드의 안전 부팅을 확인합니다.
+SensorUno와 MotorUno는 4모터 절대 전진/후진에 versioned 명령 `0x11/0x12`를 사용합니다. SensorUno·MotorUno·ActuatorUno의 세 운영 스케치를 같은 커밋에서 연속 업로드합니다. 일부만 업로드하면 구형 값 `1/2`가 INVALID이거나 `PROTOCOL_SYNC(7)`·Actuator telemetry 계약이 어긋날 수 있으므로 주행을 시작하지 않습니다.
 
 ## 8. USB 로그와 벤치 점검
 
@@ -205,11 +202,10 @@ USB 시리얼 로그가 필요한 경우 다른 시리얼 모니터를 닫고 �
 
 1. 고전력 부하를 분리하고 차체 바퀴를 바닥에서 띄웁니다.
 2. 세 Uno가 부팅 시 모터와 모든 릴레이를 끄는지 확인합니다.
-3. SensorUno가 MotorUno와 ActuatorUno의 I2C 응답을 구분해 받는지 확인합니다.
+3. SensorUno가 MotorUno와 ActuatorUno의 I2C 응답을 구분해 받고, D4 DHT22의 10바이트 telemetry가 LCD에 표시되는지 확인합니다.
 4. 자동차를 HOME 마커 조건에 놓고 실제 차체가 ZONE2 방향을 향하는지 사람이 확인합니다.
 5. `CALIBRATE_HOME` 완료 ACK가 확인되기 전에는 이동 명령을 보내지 않습니다.
-6. ActuatorUno D2 DHT22와 LCD를 확인한 뒤 라인센서, 모터 방향, RFID 정지, 액추에이터를 각각 분리 시험합니다.
-7. 후진 명령에서만 MotorUno D2/A1 초음파가 15cm 미만에서 로컬 정지하고 18cm 이상 3회에서 재개하는지 확인합니다.
+6. 라인센서, 모터 방향, MotorUno A0/A1 후방 초음파 정지, RFID 정지, 액추에이터를 각각 분리 시험합니다.
 
 이 절차는 현재 4모터 구성의 **검증 계획**입니다. 공개된 실물 증거는 이전 2모터 벤치 기록뿐이므로, 현재 커밋은 위 1단계부터 새로 기록해야 합니다. 바닥 트랙 왕복과 고전력 부하는 [현재 한계](limitations.md)의 순서로 진행합니다.
 

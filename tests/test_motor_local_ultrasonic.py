@@ -36,6 +36,23 @@ def function_body(source: str, name: str) -> str:
     raise AssertionError(f"unterminated function: {name}")
 
 
+def isr_body(source: str, vector: str) -> str:
+    """Return the body of an AVR ISR definition."""
+    match = re.search(rf"\bISR\s*\(\s*{re.escape(vector)}\s*\)\s*\{{", source)
+    if match is None:
+        raise AssertionError(f"ISR definition not found: {vector}")
+    opening = source.index("{", match.start())
+    depth = 0
+    for index in range(opening, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening + 1 : index]
+    raise AssertionError(f"unterminated ISR: {vector}")
+
+
 @dataclass
 class LocalUltrasonicModel:
     """펌웨어의 후진 전용 래치/히스테리시스를 작게 모델링한다."""
@@ -135,30 +152,31 @@ class MotorLocalUltrasonicSourceTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.source = SOURCE_PATH.read_text(encoding="utf-8")
 
-    def test_pins_thresholds_and_interrupt_capture_are_explicit(self) -> None:
+    def test_a0_a1_pins_thresholds_and_pcint_capture_are_explicit(self) -> None:
         for pattern in (
-            r"ULTRASONIC_ECHO_PIN\s*=\s*2",
+            r"ULTRASONIC_ECHO_PIN\s*=\s*A0",
             r"ULTRASONIC_TRIG_PIN\s*=\s*A1",
             r"ULTRASONIC_STOP_CM\s*=\s*15",
             r"ULTRASONIC_CLEAR_CM\s*=\s*18",
             r"ULTRASONIC_CLEAR_STREAK_REQUIRED\s*=\s*3",
+            r"ISR\s*\(\s*PCINT1_vect\s*\)",
+            r"PCMSK1\s*\|=\s*_BV\(PCINT8\)",
+            r"PCICR\s*\|=\s*_BV\(PCIE1\)",
         ):
             self.assertRegex(self.source, pattern)
-        self.assertIn(
-            "attachInterrupt(digitalPinToInterrupt(ULTRASONIC_ECHO_PIN)",
-            self.source,
-        )
-        self.assertIn("captureUltrasonicEcho, CHANGE", self.source)
+        self.assertNotIn("attachInterrupt(", self.source)
 
-    def test_echo_isr_only_captures_edge_timestamps(self) -> None:
-        body = function_body(self.source, "captureUltrasonicEcho")
+    def test_pcint_isr_only_reads_pinc_and_captures_edge_timestamps(self) -> None:
+        body = isr_body(self.source, "PCINT1_vect")
         self.assertIn("micros()", body)
+        self.assertIn("PINC & _BV(PC0)", body)
         self.assertIn("ultrasonicEchoPulseReady = true;", body)
         for forbidden in (
             "Serial",
             "Wire",
             "stopMotors",
             ".run(",
+            "digitalRead",
             "delay(",
             "delayMicroseconds",
         ):

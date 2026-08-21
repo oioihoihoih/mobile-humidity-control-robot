@@ -12,7 +12,7 @@ _합성 데이터로 렌더링한 관제 UI 예시입니다. 실차 왕복이나
 
 - 고정 센서 노드 2대가 Wi-Fi로 구역별 온·습도를 전송합니다.
 - Python 서버가 측정값과 임무 이력을 MySQL에 저장하고, 습도 편차와 지속시간으로 임무 우선순위를 계산합니다.
-- 자동차는 `SensorUno`(서버·RFID·임무), `MotorUno`(4모터·라인·후방 초음파), `ActuatorUno`(로컬 DHT22·릴레이·LCD)로 역할을 분리합니다.
+- 자동차는 `SensorUno`(ESP-01·RC522·DHT22·임무 조율), `MotorUno`(4모터·라인·후방 초음파·HOME·watchdog), `ActuatorUno`(릴레이·원격 온·습도 LCD) 3개 Uno R3로 역할을 분리합니다.
 - 4모터 구동부는 차체를 돌리지 않고 전진·후진하며 하나로 이어진 검은 선을 추종하고, 주행 중 RFID로 중간·목표 구역을 확인합니다.
 - 부팅 직후 위치를 추측하지 않습니다. HOME 마커에서 방향을 맞추고 `CALIBRATE_HOME`을 완료하기 전까지 주행을 차단합니다.
 - 임무 완료 뒤에는 같은 측정값으로 액추에이터를 반복 가동하지 않고, 새로운 구역 측정을 기다립니다.
@@ -21,8 +21,8 @@ _합성 데이터로 렌더링한 관제 UI 예시입니다. 실차 왕복이나
 
 | 범위 | 상태 | 의미 |
 | --- | --- | --- |
-| 서버·프로토콜·폐루프 회귀시험 | 자동 검사 제공 | `python scripts/check.py`로 소스 모델과 SimulIDE 계약을 검사합니다. |
-| Uno 운영 스케치 | CI 컴파일 게이트 제공 | 분배 후 로컬 빌드는 SensorUno `27,190B / 1,396B`, MotorUno `11,446B / 468B`, ActuatorUno `15,452B / 554B`(flash/SRAM)이며, CI는 SensorUno `29,000B / 1,500B` 상한을 확인합니다. |
+| 서버·프로토콜·폐루프 회귀시험 | 자동 검사 제공 | `python scripts/check.py`로 소스 모델과 체크인 SimulIDE artifact 무결성을 검사합니다. SimulIDE의 이전 센서 배치는 현재 실물 핀맵 검증이 아닙니다. |
+| Uno 운영 스케치 | CI 컴파일 게이트 제공 | 현재 로컬 빌드 flash/SRAM은 SensorUno `27,586B / 1,428B`, MotorUno `11,346B / 464B`, ActuatorUno `12,534B / 532B`입니다. SensorUno CI budget은 `29,000B / 1,500B`입니다. |
 | 이전 3-Uno·2모터 벤치 기록 | 제한적 과거 증거 | 정지 상태의 연결, RFID→STOP→액추에이터와 안전 출력 기록이며 현재 M3/M4가 포함된 4모터 검증은 아닙니다. |
 | 현재 4모터 하드웨어 | 미검증 | M1~M4 개별 방향·전류, 좌우 쌍, 전·후진과 후방 센서부터 바퀴를 띄운 상태에서 다시 검증해야 합니다. |
 | 연속 라인·RFID 실차 왕복 | 미검증 | 서로 다른 기존 모터와 N20 1:298을 함께 쓰는 4모터 차체의 속도 정합, 전·후진 선 추종, 카드 판독과 제동거리를 트랙에서 검증해야 합니다. |
@@ -30,7 +30,7 @@ _합성 데이터로 렌더링한 관제 UI 예시입니다. 실차 왕복이나
 
 자세한 증거 범위와 재현 명령은 [테스트 문서](docs/testing.md), 남은 위험은 [한계 문서](docs/limitations.md)를 확인하세요.
 
-SensorUno와 MotorUno는 반드시 같은 커밋의 펌웨어를 함께 업로드합니다. 보정 시작 시 `PROTOCOL_SYNC(7)` exact ACK를 확인하고, 이동은 구형 값 `1/2`와 분리된 `0x11/0x12`만 사용합니다. 어느 한 보드가 구형이어도 반대 방향으로 움직이지 않고 주행이 잠깁니다.
+SensorUno·MotorUno·ActuatorUno는 반드시 같은 커밋의 세 운영 펌웨어를 모두 업로드합니다. 보정 시작 시 `PROTOCOL_SYNC(7)` exact ACK를 확인하고, 이동은 구형 값 `1/2`와 분리된 `0x11/0x12`만 사용합니다. 일부 보드만 다른 버전이면 주행·액추에이터 시험을 시작하지 않습니다.
 
 ## 시스템 구성
 
@@ -40,11 +40,11 @@ flowchart LR
     Z99[구역 센서 ZONE99] -->|온·습도 HTTP| API
     API <--> DB[(MySQL)]
     UI[웹 대시보드] <--> API
-    API <-->|명령 폴링·상태 ACK| SENSOR[SensorUno + ESP-01 + RFID]
+    API <-->|명령 폴링·상태 ACK| SENSOR[SensorUno + ESP-01 + RFID + DHT22]
     SENSOR <-->|I2C 0x08| MOTOR[MotorUno]
     SENSOR <-->|I2C 0x09| ACT[ActuatorUno]
-    MOTOR --> DRIVE[4모터 전·후진 + 라인·후방 HC-SR04]
-    ACT --> OUTPUT[로컬 DHT22 + 가습·제습 릴레이 + LCD]
+    MOTOR --> DRIVE[4모터 전·후진 + 라인 + 후방 HC-SR04]
+    ACT --> OUTPUT[가습·제습 릴레이 + 원격 DHT 표시 LCD]
 ```
 
 물리 경로는 `HOME → ZONE2 → ZONE99`의 직선형입니다. 구역 사이의 검은 선은 끊기지 않으며, ZONE2·ZONE99는 RFID로 식별하고 HOME만 넓은 검은 종점 마커로 확인합니다. 전체 상태 전이와 안전 조건은 [아키텍처 문서](docs/architecture.md)에 정리되어 있습니다.

@@ -32,6 +32,8 @@ SimulIDE 쪽은 [`../simulide/firmware/build-manifest.json`](../simulide/firmwar
 기록된 각 Uno 소스와 HEX의 SHA-256을
 `python simulide\validate_sim2.py`로 확인합니다. 자세한 의미와 제한은
 [`../simulide/README.md`](../simulide/README.md)를 참고합니다.
+이 검사는 이전 센서 배치 프록시의 artifact 무결성만 확인하며 현재 Sensor D4
+DHT·Motor A0/A1 HC-SR04 핀맵의 검증 결과가 아닙니다.
 
 ## 4모터 전·후진 인계 메모
 
@@ -41,9 +43,7 @@ Git에서 재현 가능한 변경 범위와 현장 시험 순서는
 전달이 필요할 때만 같은 릴리스 저장소에 한 쌍으로 게시합니다. clean clone에
 없는 로컬 압축 파일을 문서의 필수 입력으로 간주하지 않습니다.
 
-## 3-Uno 주변기기 분배 인계 메모
-
-DHT22를 ActuatorUno D2로, 뒤쪽 HC-SR04를 MotorUno D2/A1로 이전한 최신
-역할·배선·업로드 순서는
-[`HANDOFF_DISTRIBUTED_PERIPHERALS_2026-08-21.md`](HANDOFF_DISTRIBUTED_PERIPHERALS_2026-08-21.md)에
-기록합니다. 이 문서가 기존 4WD 메모의 SensorUno DHT/HC 배선을 대체합니다.
+`HANDOFF_DISTRIBUTED_PERIPHERALS_2026-08-21.md`는 한때 검토했던 주변기기
+분배안을 기록한 폐기 문서입니다. 현재 배선이나 업로드 지침으로 사용하지 말고,
+SensorUno D4 DHT22와 MotorUno `ECHO=A0`/`TRIG=A1` HC-SR04 기준의 위
+4WD 인계 메모를 따릅니다.

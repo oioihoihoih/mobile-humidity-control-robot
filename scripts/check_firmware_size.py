@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep the distributed SensorUno below the project's flash/SRAM budgets."""
+"""Keep the memory-optimized SensorUno below the project's flash/SRAM budgets."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from pathlib import Path
 
 SENSOR_SKETCH = "uno_robot_esp01_rfid_relay"
 LIMITS = {
-    # DHT22 and HC-SR04 were moved to ActuatorUno/MotorUno so future changes
-    # must not silently consume the recovered headroom again.
+    # DHT22 remains on SensorUno D4, while HC-SR04 moved to MotorUno A0/A1.
+    # Normal log trimming recovered headroom that future changes must preserve.
     "flash": 29_000,
     "RAM for global variables": 1_500,
 }

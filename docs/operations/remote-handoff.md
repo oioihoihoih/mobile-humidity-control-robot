@@ -82,7 +82,9 @@ python simulide\validate_sim2.py
 ```
 
 이 명령은 `simulide/firmware/build-manifest.json`에 기록된 source/HEX SHA-256을
-실제 파일과 대조한다. 이 manifest는 서버 archive checksum과 목적이 다르다.
+실제 파일과 대조한다. 이 manifest는 서버 archive checksum과 목적이 다르며
+이전 센서 배치 프록시의 무결성만 뜻한다. 현재 Sensor D4 DHT·Motor A0/A1
+HC-SR04 실물 핀맵 검증으로 인계하지 않는다.
 
 ## 배포 제한
 
@@ -109,10 +111,9 @@ python simulide\validate_sim2.py
 - 남은 오류의 가려진 로그
 
 하드웨어 상태는 서버 배포 상태와 별개다. 3 Uno · 4모터 차량의 HOME 보정,
-M1~M4 전·후진과 축별 PWM 정합, 라인 주행, RFID, MotorUno D2/A1 후방
-초음파 로컬 PAUSE, ActuatorUno D2 DHT22/LCD와 액추에이터 부하는 각 단계의
-OFF와 ACK를 확인하는 별도 감독 시험이 필요하다.
-세 Uno를 반드시 같은 commit으로 업로드한다. 먼저 SensorUno↔ActuatorUno의
-4바이트 제어/6바이트 응답 exact ACK를 확인하고, SensorUno↔MotorUno는 부팅
-status 8에서 `PROTOCOL_SYNC(7)` exact ACK를 받은 뒤 status 7의 HOME 보정으로 진행한다.
+M1~M4 전·후진과 축별 PWM 정합, 라인 주행, RFID, 후방 초음파 PAUSE,
+액추에이터 부하는 각 단계의 OFF와 ACK를 확인하는 별도 감독 시험이 필요하다.
+SensorUno·MotorUno·ActuatorUno의 세 production 스케치를 같은 commit으로 모두
+업로드한다. 부분 업로드나 서로 다른 commit의 혼용은 허용하지 않는다. 부팅 status
+8에서 `PROTOCOL_SYNC(7)` exact ACK를 받은 뒤 status 7의 HOME 보정으로 진행한다.
 이 순서를 통과하지 못하면 구형/신형 혼용으로 간주하고 이동 시험을 중단한다.
